@@ -1,0 +1,7 @@
+qwen-tts
+torch
+soundfile
+setproctitle
+pytest
+ruff
+numpy<2.3
