@@ -1,25 +1,9 @@
-import contextlib
-import io
 import subprocess
-import sys
 import tempfile
 import torch
 import soundfile as sf
 from pathlib import Path
 from abc import ABC, abstractmethod
-
-
-@contextlib.contextmanager
-def suppress_stdout():
-    # ##################################################################
-    # suppress stdout
-    # temporarily redirect stdout to suppress noisy import warnings
-    old_stdout = sys.stdout
-    sys.stdout = io.StringIO()
-    try:
-        yield
-    finally:
-        sys.stdout = old_stdout
 
 
 # available voices for qwen3-tts customvoice model
@@ -85,10 +69,11 @@ class QwenTtsEngine(TtsEngine):
     def _get_model(self):
         # ##################################################################
         # get model
-        # lazy load model to avoid memory use until needed, suppress flash-attn warning
+        # lazy load model with flash attention shim for non-cuda systems
         if self._model is None:
-            with suppress_stdout():
-                from qwen_tts import Qwen3TTSModel
+            from src.flash_attn_shim import install_flash_attn_shim
+            install_flash_attn_shim()
+            from qwen_tts import Qwen3TTSModel
             device, dtype = self._get_device_and_dtype()
             kwargs = {
                 "device_map": device,
