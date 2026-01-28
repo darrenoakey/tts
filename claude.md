@@ -13,6 +13,7 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 
 - `src/tts_engine.py` - Engine abstraction with QwenTtsEngine, VoiceDesignEngine, VoiceCloneEngine
 - `src/voice_scraper.py` - Scrape voice samples from moviesoundclips.net
+- `src/audio_quality.py` - Audio quality analysis, noise reduction, reference preparation
 - `src/tts.py` - CLI entry point
 - `voices.json` - Custom voice registry
 - `run` - Project runner with venv management
@@ -37,7 +38,13 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 **Voice cloning requirements**:
 - `ref_audio`: Path to reference audio file (24kHz sample rate)
 - `ref_text`: Transcription of what's said in reference audio (required - without it, generation hangs)
+- Optimal reference length: 10-15 seconds of clean speech
 - Use mlx-whisper to transcribe: `mlx_whisper.transcribe(audio_path, path_or_hf_repo="mlx-community/whisper-large-v3-turbo")`
+
+**Audio quality for voice cloning**:
+- Use `src/audio_quality.py` to analyze clips by SNR and select best quality
+- Noise reduction applied automatically with noisereduce library
+- Run `python -m src.audio_quality <clip_dir> <max_duration>` to prepare clean reference
 
 ## Models
 
