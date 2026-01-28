@@ -4,8 +4,11 @@ import sys
 from pathlib import Path
 
 import setproctitle
+from colorama import Fore, Style, init
 
 from src.tts_engine import QWEN_VOICES, DEFAULT_VOICE, DEFAULT_TEMPERATURE, DEFAULT_SPEED, register_voice, list_custom_voices
+
+init(autoreset=True)
 
 
 # ##################################################################
@@ -15,7 +18,6 @@ def main(argv: list[str]) -> int:
     setproctitle.setproctitle("tts")
 
     custom_voices = list_custom_voices()
-    all_voices = QWEN_VOICES + custom_voices
     voice_help = f"Voice to use (default: {DEFAULT_VOICE}). Built-in: {', '.join(QWEN_VOICES)}"
     if custom_voices:
         voice_help += f". Custom: {', '.join(custom_voices)}"
@@ -89,7 +91,7 @@ def main(argv: list[str]) -> int:
     )
 
     # list-voices command
-    p_list = sub.add_parser("list-voices", help="List available voices")
+    sub.add_parser("list-voices", help="List available voices")
 
     args = parser.parse_args(argv)
 
@@ -100,21 +102,38 @@ def main(argv: list[str]) -> int:
 
     if args.command == "register-voice":
         register_voice(args.name, args.description, args.speed)
-        print(f"Registered voice '{args.name}' with speed {args.speed}")
+        print(f"{Fore.GREEN}✓{Style.RESET_ALL} Registered voice '{Fore.CYAN}{args.name}{Style.RESET_ALL}' with speed {Fore.YELLOW}{args.speed}{Style.RESET_ALL}")
         return 0
 
     if args.command == "list-voices":
-        print("Built-in voices:")
+        print(f"\n{Fore.BLUE}{Style.BRIGHT}Built-in voices:{Style.RESET_ALL}")
         for v in QWEN_VOICES:
-            print(f"  {v}")
+            print(f"  {Fore.WHITE}•{Style.RESET_ALL} {Fore.CYAN}{v}{Style.RESET_ALL}")
         custom = list_custom_voices()
         if custom:
-            print("\nCustom voices:")
             from src.tts_engine import load_voice_registry
             registry = load_voice_registry()
+            designed = []
+            cloned = []
             for v in custom:
                 info = registry[v]
-                print(f"  {v}: {info['description'][:50]}... (speed: {info['speed']})")
+                if info.get("type") == "clone":
+                    cloned.append((v, info))
+                else:
+                    designed.append((v, info))
+            if designed:
+                print(f"\n{Fore.MAGENTA}{Style.BRIGHT}Designed voices:{Style.RESET_ALL}")
+                for v, info in designed:
+                    desc = info.get("description", "No description")
+                    speed = info.get('speed', 1.0)
+                    print(f"  {Fore.WHITE}•{Style.RESET_ALL} {Fore.GREEN}{v}{Style.RESET_ALL}: {Fore.WHITE}{desc[:50]}...{Style.RESET_ALL} {Style.DIM}(speed: {speed}){Style.RESET_ALL}")
+            if cloned:
+                print(f"\n{Fore.YELLOW}{Style.BRIGHT}Cloned voices:{Style.RESET_ALL}")
+                for v, info in cloned:
+                    ref_audio = info.get("ref_audio", "unknown")
+                    speed = info.get('speed', 1.0)
+                    print(f"  {Fore.WHITE}•{Style.RESET_ALL} {Fore.GREEN}{v}{Style.RESET_ALL}: ref={Fore.CYAN}{Path(ref_audio).name}{Style.RESET_ALL} {Style.DIM}(speed: {speed}){Style.RESET_ALL}")
+        print()
         return 0
 
     if args.command == "generate":
@@ -130,16 +149,16 @@ def main(argv: list[str]) -> int:
                 speed=args.speed,
                 voice_description=args.voice_description,
             )
-            print(f"Generated: {output_path}")
+            print(f"{Fore.GREEN}✓{Style.RESET_ALL} Generated: {Fore.CYAN}{output_path}{Style.RESET_ALL}")
             return 0
         except FileNotFoundError as err:
-            print(f"Error: {err}", file=sys.stderr)
+            print(f"{Fore.RED}✗ Error:{Style.RESET_ALL} {err}", file=sys.stderr)
             return 1
         except ValueError as err:
-            print(f"Error: {err}", file=sys.stderr)
+            print(f"{Fore.RED}✗ Error:{Style.RESET_ALL} {err}", file=sys.stderr)
             return 1
         except Exception as err:
-            print(f"Error: {err}", file=sys.stderr)
+            print(f"{Fore.RED}✗ Error:{Style.RESET_ALL} {err}", file=sys.stderr)
             return 1
 
     return 0

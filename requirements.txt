@@ -8,3 +8,4 @@ ruff
 numpy<2.3
 requests
 noisereduce
+colorama

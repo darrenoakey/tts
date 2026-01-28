@@ -8,6 +8,9 @@ from pathlib import Path
 import numpy as np
 import noisereduce as nr
 import soundfile as sf
+from colorama import Fore, Style, init
+
+init(autoreset=True)
 
 
 # ##################################################################
@@ -149,21 +152,19 @@ ENHANCE_TOOL = Path.home() / "src" / "audio-enhance" / "run"
 
 def enhance_audio(input_path: Path, output_path: Path, sr_target: int = 24000) -> Path:
     if not ENHANCE_TOOL.exists():
-        print(f"  Warning: {ENHANCE_TOOL} not found, falling back to basic noise reduction")
-        return reduce_noise_basic(input_path, output_path, sr_target)
+        raise RuntimeError(f"Enhancement tool not found: {ENHANCE_TOOL}")
 
     # create temp file for enhanced output
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp_enhanced = Path(tmp.name)
 
-    # run resemble-enhance
+    # run resemble-enhance (does both denoising and enhancement)
     cmd = [str(ENHANCE_TOOL), "enhance", str(input_path), str(tmp_enhanced)]
     result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:
-        print(f"  Warning: resemble-enhance failed, falling back to basic: {result.stderr[:200]}")
         tmp_enhanced.unlink(missing_ok=True)
-        return reduce_noise_basic(input_path, output_path, sr_target)
+        raise RuntimeError(f"Enhancement failed: {result.stderr}")
 
     # resample to target sample rate
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -182,10 +183,6 @@ def enhance_audio(input_path: Path, output_path: Path, sr_target: int = 24000) -
     return output_path
 
 
-# default to AI enhancement
-reduce_noise = enhance_audio
-
-
 # ##################################################################
 # select best clips
 # select highest quality clips up to max duration
@@ -198,14 +195,14 @@ def select_best_clips(clip_dir: Path, max_duration: float = 15.0) -> list[dict]:
         return []
 
     # analyze all clips
-    print(f"Analyzing {len(clips)} clips...")
+    print(f"{Fore.BLUE}🔬 Analyzing {Fore.YELLOW}{len(clips)}{Fore.BLUE} clips...{Style.RESET_ALL}")
     analyses = []
     for clip in clips:
         try:
             analysis = analyze_clip(clip)
             analyses.append(analysis)
         except Exception as e:
-            print(f"  Skipping {clip.name}: {e}")
+            print(f"  {Fore.RED}✗{Style.RESET_ALL} Skipping {Fore.CYAN}{clip.name}{Style.RESET_ALL}: {e}")
 
     # sort by quality score (descending)
     analyses.sort(key=lambda x: x["quality_score"], reverse=True)
@@ -236,21 +233,23 @@ def prepare_reference_audio(
     if not selected:
         raise ValueError("No clips found")
 
-    print(f"\nSelected {len(selected)} clips ({sum(c['duration'] for c in selected):.1f}s total):")
+    total_duration = sum(c['duration'] for c in selected)
+    print(f"\n{Fore.GREEN}✓{Style.RESET_ALL} Selected {Fore.YELLOW}{len(selected)}{Style.RESET_ALL} clips ({Fore.CYAN}{total_duration:.1f}s{Style.RESET_ALL} total):")
     for c in selected:
-        print(f"  {c['path'].name}: {c['duration']:.1f}s, SNR={c['snr']:.1f}dB, quality={c['quality_score']:.1f}")
+        print(f"  {Fore.WHITE}•{Style.RESET_ALL} {Fore.CYAN}{c['path'].name}{Style.RESET_ALL}: {c['duration']:.1f}s, {Style.DIM}SNR={c['snr']:.1f}dB, quality={c['quality_score']:.1f}{Style.RESET_ALL}")
 
-    # enhance each selected clip with AI
-    print("\nEnhancing clips with AI (this may take a few minutes per clip)...")
+    # enhance each selected clip with AI (resemble-enhance does denoising + enhancement)
+    print(f"\n{Fore.MAGENTA}🤖 Enhancing clips with AI{Style.RESET_ALL} {Style.DIM}(this may take a few minutes per clip)...{Style.RESET_ALL}")
     clean_paths = []
     for i, c in enumerate(selected):
         clean_path = c["path"].parent / f"{c['path'].stem}_enhanced.wav"
-        print(f"  [{i+1}/{len(selected)}] Enhancing {c['path'].name} ({c['duration']:.1f}s)...")
-        reduce_noise(c["path"], clean_path)
+        print(f"  {Fore.BLUE}[{i+1}/{len(selected)}]{Style.RESET_ALL} Enhancing {Fore.CYAN}{c['path'].name}{Style.RESET_ALL} ({c['duration']:.1f}s)...")
+        enhance_audio(c["path"], clean_path)
+        print(f"  {Fore.GREEN}✓{Style.RESET_ALL} Enhanced {Fore.CYAN}{clean_path.name}{Style.RESET_ALL}")
         clean_paths.append(clean_path)
 
     # concatenate clean clips
-    print(f"\nConcatenating to {output_path}...")
+    print(f"\n{Fore.BLUE}🔗 Concatenating to {Fore.CYAN}{output_path.name}{Fore.BLUE}...{Style.RESET_ALL}")
     if len(clean_paths) == 1:
         import shutil
         shutil.copy(clean_paths[0], output_path)
@@ -282,8 +281,8 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
-        print("Usage: python -m src.audio_quality <clip_dir> [max_duration]")
-        print("  Analyzes clips in directory and prepares cleaned reference audio")
+        print(f"{Fore.YELLOW}Usage:{Style.RESET_ALL} python -m src.audio_quality {Fore.CYAN}<clip_dir>{Style.RESET_ALL} [max_duration]")
+        print(f"  {Style.DIM}Analyzes clips in directory and prepares cleaned reference audio{Style.RESET_ALL}")
         sys.exit(1)
 
     clip_dir = Path(sys.argv[1])
@@ -291,4 +290,4 @@ if __name__ == "__main__":
 
     output_path = clip_dir / "reference_clean.wav"
     prepare_reference_audio(clip_dir, output_path, max_duration)
-    print(f"\nReference audio ready: {output_path}")
+    print(f"\n{Fore.GREEN}✓{Style.RESET_ALL} Reference audio ready: {Fore.CYAN}{output_path}{Style.RESET_ALL}")

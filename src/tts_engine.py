@@ -116,6 +116,25 @@ def convert_wav_to_mp3(wav_path: Path, mp3_path: Path, normalize: bool = True, s
 # ##################################################################
 # concatenate wav files
 # use ffmpeg to concatenate multiple wav files into one
+# ##################################################################
+# enhance output audio
+# use resemble-enhance to clean up TTS output
+ENHANCE_TOOL = Path.home() / "src" / "audio-enhance" / "run"
+
+
+def enhance_output(input_path: Path, output_path: Path) -> Path:
+    if not ENHANCE_TOOL.exists():
+        raise RuntimeError(f"Enhancement tool not found: {ENHANCE_TOOL}")
+
+    cmd = [str(ENHANCE_TOOL), "enhance", str(input_path), str(output_path)]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Enhancement failed: {result.stderr}")
+
+    return output_path
+
+
 def concatenate_wav_files(wav_paths: list[Path], output_path: Path) -> Path:
     if len(wav_paths) == 1:
         # just copy the single file
@@ -150,10 +169,12 @@ class TtsEngine(ABC):
 
     @abstractmethod
     def synthesize(self, text: str, output_path: Path, language: str = "English",
-                   temperature: float = DEFAULT_TEMPERATURE, speed: float = DEFAULT_SPEED) -> Path:
+                   temperature: float = DEFAULT_TEMPERATURE, speed: float = DEFAULT_SPEED,
+                   enhance: bool = False) -> Path:
         # ##################################################################
         # synthesize
         # convert text to speech and write to output_path, returning the path
+        # if enhance=True, apply AI enhancement to clean up the output
         ...
 
 
@@ -182,11 +203,13 @@ class QwenTtsEngine(TtsEngine):
         return self._model
 
     def synthesize(self, text: str, output_path: Path, language: str = "English",
-                   temperature: float = DEFAULT_TEMPERATURE, speed: float = DEFAULT_SPEED) -> Path:
+                   temperature: float = DEFAULT_TEMPERATURE, speed: float = DEFAULT_SPEED,
+                   enhance: bool = False) -> Path:
         # ##################################################################
         # synthesize
         # generate speech from text using qwen model and save as mp3
         # processes text in chunks to avoid memory spikes on long inputs
+        # if enhance=True, apply AI enhancement to clean up the output
         import mlx.core as mx
 
         model = self._get_model()
@@ -274,10 +297,12 @@ class VoiceDesignEngine(TtsEngine):
         return self._model
 
     def synthesize(self, text: str, output_path: Path, language: str = "English",
-                   temperature: float = DEFAULT_TEMPERATURE, speed: float = DEFAULT_SPEED) -> Path:
+                   temperature: float = DEFAULT_TEMPERATURE, speed: float = DEFAULT_SPEED,
+                   enhance: bool = False) -> Path:
         # ##################################################################
         # synthesize
         # generate speech from text using voice design model
+        # if enhance=True, apply AI enhancement to clean up the output
         import mlx.core as mx
 
         model = self._get_model()
@@ -365,7 +390,8 @@ class VoiceCloneEngine(TtsEngine):
         return self._model
 
     def synthesize(self, text: str, output_path: Path, language: str = "English",
-                   temperature: float = DEFAULT_TEMPERATURE, speed: float = DEFAULT_SPEED) -> Path:
+                   temperature: float = DEFAULT_TEMPERATURE, speed: float = DEFAULT_SPEED,
+                   enhance: bool = False) -> Path:
         # ##################################################################
         # synthesize
         # generate speech from text using voice cloning
@@ -419,14 +445,26 @@ class VoiceCloneEngine(TtsEngine):
                 mx.clear_cache()
 
             # concatenate all chunk wavs into final output
-            if output_path.suffix.lower() == ".mp3":
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                combined_wav = Path(tmp.name)
+            concatenate_wav_files(chunk_wavs, combined_wav)
+
+            # optionally enhance output with AI
+            if enhance:
+                print("Enhancing output with AI...")
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                    combined_wav = Path(tmp.name)
-                concatenate_wav_files(chunk_wavs, combined_wav)
+                    enhanced_wav = Path(tmp.name)
+                enhance_output(combined_wav, enhanced_wav)
+                combined_wav.unlink()
+                combined_wav = enhanced_wav
+
+            # convert to mp3 if needed
+            if output_path.suffix.lower() == ".mp3":
                 convert_wav_to_mp3(combined_wav, output_path, normalize=True, speed=speed)
                 combined_wav.unlink()
             else:
-                concatenate_wav_files(chunk_wavs, output_path)
+                import shutil
+                shutil.move(str(combined_wav), str(output_path))
 
         finally:
             # clean up chunk temp files

@@ -9,8 +9,11 @@ from pathlib import Path
 from urllib.parse import urljoin
 
 import requests
+from colorama import Fore, Style, init
 
 from src.tts_engine import VOICE_REGISTRY_PATH
+
+init(autoreset=True)
 
 
 # ##################################################################
@@ -26,6 +29,31 @@ def transcribe_audio(audio_path: Path) -> str:
 
 BASE_URL = "https://www.moviesoundclips.net"
 LOCAL_DIR = Path(__file__).parent.parent / "local" / "movie"
+
+
+# ##################################################################
+# list celebrities
+# list all celebrities available on moviesoundclips.net
+def list_celebrities() -> list[tuple[int, str]]:
+    pages = ["", "?page=1", "?page=2", "?page=3"]
+    celebs = []
+
+    for page in pages:
+        url = f"{BASE_URL}/people.php{page}"
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+
+        # extract all celebrity links
+        # pattern: <a href="people-details.php?id=28" ...>Nathan Fillion</a>
+        pattern = r'<a href="people-details\.php\?id=(\d+)"[^>]*>([^<]+)</a>'
+        matches = re.findall(pattern, response.text)
+
+        for person_id, name in matches:
+            celebs.append((int(person_id), name.strip()))
+
+    # sort by name
+    celebs.sort(key=lambda x: x[1].lower())
+    return celebs
 
 
 # ##################################################################
@@ -81,11 +109,11 @@ def download_clips(urls: list[str], output_dir: Path) -> list[Path]:
         output_path = output_dir / filename
 
         if output_path.exists():
-            print(f"  [{i+1}/{len(urls)}] Already exists: {filename}")
+            print(f"  {Fore.YELLOW}[{i+1}/{len(urls)}]{Style.RESET_ALL} {Style.DIM}Already exists:{Style.RESET_ALL} {Fore.CYAN}{filename}{Style.RESET_ALL}")
             downloaded.append(output_path)
             continue
 
-        print(f"  [{i+1}/{len(urls)}] Downloading: {url}")
+        print(f"  {Fore.BLUE}[{i+1}/{len(urls)}]{Style.RESET_ALL} Downloading: {Fore.CYAN}{url.split('/')[-1]}{Style.RESET_ALL}")
         try:
             response = requests.get(url, timeout=60)
             response.raise_for_status()
@@ -93,7 +121,7 @@ def download_clips(urls: list[str], output_dir: Path) -> list[Path]:
             downloaded.append(output_path)
             time.sleep(0.5)  # be nice to the server
         except Exception as e:
-            print(f"    Failed: {e}")
+            print(f"    {Fore.RED}✗ Failed:{Style.RESET_ALL} {e}")
 
     return downloaded
 
@@ -145,13 +173,13 @@ def concatenate_with_silence(wav_files: list[Path], output_path: Path, silence_m
 # create voice from person
 # scrape clips and create a cloned voice
 def create_voice_from_person(name: str, speed: float = 1.0) -> str:
-    print(f"Searching for '{name}'...")
+    print(f"\n{Fore.BLUE}🔍 Searching for '{Fore.CYAN}{name}{Fore.BLUE}'...{Style.RESET_ALL}")
     result = search_person(name)
     if not result:
         raise ValueError(f"Could not find '{name}' on moviesoundclips.net")
 
     person_id, full_name = result
-    print(f"Found: {full_name} (id={person_id})")
+    print(f"{Fore.GREEN}✓{Style.RESET_ALL} Found: {Fore.CYAN}{Style.BRIGHT}{full_name}{Style.RESET_ALL} {Style.DIM}(id={person_id}){Style.RESET_ALL}")
 
     # create voice name from full name
     voice_name = full_name.lower().replace(" ", "_").replace(".", "").replace("'", "")
@@ -161,28 +189,29 @@ def create_voice_from_person(name: str, speed: float = 1.0) -> str:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # get clip URLs
-    print("Getting clip URLs...")
+    print(f"\n{Fore.BLUE}📋 Getting clip URLs...{Style.RESET_ALL}")
     urls = get_clip_urls(person_id)
-    print(f"Found {len(urls)} clips")
+    print(f"{Fore.GREEN}✓{Style.RESET_ALL} Found {Fore.YELLOW}{len(urls)}{Style.RESET_ALL} clips")
 
     if not urls:
         raise ValueError(f"No clips found for {full_name}")
 
     # download clips
-    print("Downloading clips...")
+    print(f"\n{Fore.BLUE}⬇️  Downloading clips...{Style.RESET_ALL}")
     wav_files = download_clips(urls, output_dir)
-    print(f"Downloaded {len(wav_files)} clips")
+    print(f"{Fore.GREEN}✓{Style.RESET_ALL} Downloaded {Fore.YELLOW}{len(wav_files)}{Style.RESET_ALL} clips")
 
     # select best clips and clean them (40 seconds of best quality audio)
     from src.audio_quality import prepare_reference_audio
     reference_path = output_dir / "reference_clean.wav"
-    print("\nPreparing clean reference audio (selecting best 40s of clips, removing noise)...")
+    print(f"\n{Fore.BLUE}🎵 Preparing clean reference audio{Style.RESET_ALL} {Style.DIM}(selecting best 40s, removing noise)...{Style.RESET_ALL}")
     prepare_reference_audio(output_dir, reference_path, max_duration=40.0)
 
     # transcribe the reference audio for voice cloning
-    print("\nTranscribing reference audio with Whisper...")
+    print(f"\n{Fore.BLUE}📝 Transcribing reference audio with Whisper...{Style.RESET_ALL}")
     ref_text = transcribe_audio(reference_path)
-    print(f"Transcription: {ref_text[:100]}..." if len(ref_text) > 100 else f"Transcription: {ref_text}")
+    transcription_preview = ref_text[:100] + "..." if len(ref_text) > 100 else ref_text
+    print(f"{Fore.GREEN}✓{Style.RESET_ALL} Transcription: {Style.DIM}{transcription_preview}{Style.RESET_ALL}")
 
     # register the voice with a reference to the audio file and transcription
     # voice cloning requires both ref_audio and ref_text
@@ -201,7 +230,7 @@ def create_voice_from_person(name: str, speed: float = 1.0) -> str:
     registry[voice_name] = registry_data
     VOICE_REGISTRY_PATH.write_text(json.dumps(registry, indent=2))
 
-    print(f"Registered voice '{voice_name}'")
+    print(f"\n{Fore.GREEN}✓{Style.RESET_ALL} Registered voice '{Fore.CYAN}{Style.BRIGHT}{voice_name}{Style.RESET_ALL}'")
     return voice_name
 
 
@@ -210,10 +239,10 @@ def create_voice_from_person(name: str, speed: float = 1.0) -> str:
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2:
-        print("Usage: python -m src.voice_scraper <person_name>")
+        print(f"{Fore.YELLOW}Usage:{Style.RESET_ALL} python -m src.voice_scraper {Fore.CYAN}<person_name>{Style.RESET_ALL}")
         sys.exit(1)
 
     name = " ".join(sys.argv[1:])
     voice_name = create_voice_from_person(name)
-    print(f"\nVoice '{voice_name}' is ready!")
-    print(f"Use with: ./run tts input.txt -v {voice_name}")
+    print(f"\n{Fore.GREEN}{Style.BRIGHT}🎉 Voice '{voice_name}' is ready!{Style.RESET_ALL}")
+    print(f"{Fore.WHITE}Use with:{Style.RESET_ALL} {Fore.CYAN}./run tts input.txt -v {voice_name}{Style.RESET_ALL}\n")
