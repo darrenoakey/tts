@@ -11,8 +11,10 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 
 ## Key Files
 
-- `src/tts_engine.py` - Engine abstraction and QwenTtsEngine implementation
+- `src/tts_engine.py` - Engine abstraction with QwenTtsEngine, VoiceDesignEngine, VoiceCloneEngine
+- `src/voice_scraper.py` - Scrape voice samples from moviesoundclips.net
 - `src/tts.py` - CLI entry point
+- `voices.json` - Custom voice registry
 - `run` - Project runner with venv management
 
 ## Architecture
@@ -24,9 +26,18 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 
 ## Voices
 
-Available for CustomVoice model:
+**Built-in voices** (CustomVoice model):
 - English: aiden, ryan, ono_anna, sohee
 - Chinese: vivian, serena, uncle_fu, dylan (beijing dialect), eric (sichuan dialect)
+
+**Custom voices** stored in `voices.json`:
+- Description-based: Uses VoiceDesign model with text description of desired voice
+- Clone-based: Uses Base model with ref_audio + ref_text for voice cloning
+
+**Voice cloning requirements**:
+- `ref_audio`: Path to reference audio file (24kHz sample rate)
+- `ref_text`: Transcription of what's said in reference audio (required - without it, generation hangs)
+- Use mlx-whisper to transcribe: `mlx_whisper.transcribe(audio_path, path_or_hf_repo="mlx-community/whisper-large-v3-turbo")`
 
 ## Models
 
