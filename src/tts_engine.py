@@ -1,4 +1,5 @@
 import gc
+import json
 import re
 import subprocess
 import tempfile
@@ -14,10 +15,42 @@ from abc import ABC, abstractmethod
 QWEN_VOICES = ["aiden", "ryan", "ono_anna", "sohee", "vivian", "serena", "uncle_fu", "dylan", "eric"]
 DEFAULT_VOICE = "aiden"
 DEFAULT_TEMPERATURE = 0.9
+DEFAULT_SPEED = 1.0
 
 # chunk size for processing long texts (in sentences)
 # smaller chunks = more stable memory but slightly more overhead
 DEFAULT_CHUNK_SENTENCES = 3
+
+# voice registry location
+VOICE_REGISTRY_PATH = Path(__file__).parent.parent / "voices.json"
+
+
+# ##################################################################
+# voice registry
+# save and load custom voice descriptions by name
+def load_voice_registry() -> dict:
+    if VOICE_REGISTRY_PATH.exists():
+        return json.loads(VOICE_REGISTRY_PATH.read_text())
+    return {}
+
+
+def save_voice_registry(registry: dict) -> None:
+    VOICE_REGISTRY_PATH.write_text(json.dumps(registry, indent=2))
+
+
+def register_voice(name: str, description: str, speed: float = DEFAULT_SPEED) -> None:
+    registry = load_voice_registry()
+    registry[name.lower()] = {"description": description, "speed": speed}
+    save_voice_registry(registry)
+
+
+def get_voice_description(name: str) -> dict | None:
+    registry = load_voice_registry()
+    return registry.get(name.lower())
+
+
+def list_custom_voices() -> list[str]:
+    return list(load_voice_registry().keys())
 
 
 # ##################################################################
@@ -45,14 +78,26 @@ def split_into_chunks(text: str, sentences_per_chunk: int = DEFAULT_CHUNK_SENTEN
 
 # ##################################################################
 # convert wav to mp3
-# use ffmpeg to compress wav audio to mp3 format with audio normalization
-def convert_wav_to_mp3(wav_path: Path, mp3_path: Path, normalize: bool = True) -> Path:
+# use ffmpeg to compress wav audio to mp3 format with audio normalization and speed
+def convert_wav_to_mp3(wav_path: Path, mp3_path: Path, normalize: bool = True, speed: float = 1.0) -> Path:
+    filters = []
+
+    # speed adjustment (atempo only supports 0.5-2.0, chain for more extreme)
+    if speed != 1.0:
+        speed = max(0.5, min(2.0, speed))  # clamp to valid range
+        filters.append(f"atempo={speed}")
+
     if normalize:
         # use ffmpeg's loudnorm filter for EBU R128 loudness normalization
         # and alimiter to prevent clipping - very conservative settings
+        filters.append("loudnorm=I=-28:TP=-9:LRA=7")
+        filters.append("alimiter=limit=0.4:attack=3:release=100")
+
+    if filters:
+        filter_str = ",".join(filters)
         cmd = [
             "ffmpeg", "-y", "-i", str(wav_path),
-            "-af", "loudnorm=I=-28:TP=-9:LRA=7,alimiter=limit=0.4:attack=3:release=100",
+            "-af", filter_str,
             "-codec:a", "libmp3lame", "-qscale:a", "2",
             str(mp3_path)
         ]
@@ -104,7 +149,8 @@ def concatenate_wav_files(wav_paths: list[Path], output_path: Path) -> Path:
 class TtsEngine(ABC):
 
     @abstractmethod
-    def synthesize(self, text: str, output_path: Path, language: str = "English", temperature: float = DEFAULT_TEMPERATURE) -> Path:
+    def synthesize(self, text: str, output_path: Path, language: str = "English",
+                   temperature: float = DEFAULT_TEMPERATURE, speed: float = DEFAULT_SPEED) -> Path:
         # ##################################################################
         # synthesize
         # convert text to speech and write to output_path, returning the path
@@ -135,7 +181,8 @@ class QwenTtsEngine(TtsEngine):
             self._model = load_model(self.model_name)
         return self._model
 
-    def synthesize(self, text: str, output_path: Path, language: str = "English", temperature: float = DEFAULT_TEMPERATURE) -> Path:
+    def synthesize(self, text: str, output_path: Path, language: str = "English",
+                   temperature: float = DEFAULT_TEMPERATURE, speed: float = DEFAULT_SPEED) -> Path:
         # ##################################################################
         # synthesize
         # generate speech from text using qwen model and save as mp3
@@ -189,7 +236,194 @@ class QwenTtsEngine(TtsEngine):
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                     combined_wav = Path(tmp.name)
                 concatenate_wav_files(chunk_wavs, combined_wav)
-                convert_wav_to_mp3(combined_wav, output_path, normalize=True)
+                convert_wav_to_mp3(combined_wav, output_path, normalize=True, speed=speed)
+                combined_wav.unlink()
+            else:
+                concatenate_wav_files(chunk_wavs, output_path)
+
+        finally:
+            # clean up chunk temp files
+            for chunk_wav in chunk_wavs:
+                if chunk_wav.exists():
+                    chunk_wav.unlink()
+
+        return output_path
+
+
+# ##################################################################
+# voice design engine
+# implementation using qwen3-tts voice design model for custom voice descriptions
+class VoiceDesignEngine(TtsEngine):
+
+    def __init__(self, model_name: str = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16",
+                 voice_description: str = "A clear, neutral voice."):
+        # ##################################################################
+        # init
+        # load the voice design model with a voice description
+        self.model_name = model_name
+        self.voice_description = voice_description
+        self._model = None
+
+    def _get_model(self):
+        # ##################################################################
+        # get model
+        # lazy load model using mlx-audio
+        if self._model is None:
+            from mlx_audio.tts.utils import load_model
+            self._model = load_model(self.model_name)
+        return self._model
+
+    def synthesize(self, text: str, output_path: Path, language: str = "English",
+                   temperature: float = DEFAULT_TEMPERATURE, speed: float = DEFAULT_SPEED) -> Path:
+        # ##################################################################
+        # synthesize
+        # generate speech from text using voice design model
+        import mlx.core as mx
+
+        model = self._get_model()
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # split text into chunks for memory-efficient processing
+        chunks = split_into_chunks(text)
+        chunk_wavs: list[Path] = []
+
+        try:
+            for i, chunk in enumerate(chunks):
+                print(f"Processing chunk {i + 1}/{len(chunks)}...")
+
+                # generate audio using voice design API
+                results = list(model.generate_voice_design(
+                    text=chunk,
+                    language=language,
+                    instruct=self.voice_description,
+                    temperature=temperature,
+                ))
+
+                if not results:
+                    raise RuntimeError(f"No audio generated for chunk {i + 1}")
+
+                # convert mlx array to numpy for soundfile
+                audio = results[0].audio
+                if hasattr(audio, 'tolist'):
+                    audio_np = np.array(audio.tolist(), dtype=np.float32)
+                else:
+                    audio_np = np.array(audio, dtype=np.float32)
+
+                # write chunk to temp file immediately to free memory
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                    chunk_wav = Path(tmp.name)
+                sf.write(str(chunk_wav), audio_np, model.sample_rate)
+                chunk_wavs.append(chunk_wav)
+
+                # free memory from this chunk
+                del results, audio, audio_np
+                gc.collect()
+                mx.clear_cache()
+
+            # concatenate all chunk wavs into final output
+            if output_path.suffix.lower() == ".mp3":
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                    combined_wav = Path(tmp.name)
+                concatenate_wav_files(chunk_wavs, combined_wav)
+                convert_wav_to_mp3(combined_wav, output_path, normalize=True, speed=speed)
+                combined_wav.unlink()
+            else:
+                concatenate_wav_files(chunk_wavs, output_path)
+
+        finally:
+            # clean up chunk temp files
+            for chunk_wav in chunk_wavs:
+                if chunk_wav.exists():
+                    chunk_wav.unlink()
+
+        return output_path
+
+
+# ##################################################################
+# voice clone engine
+# implementation using qwen3-tts base model for voice cloning from audio samples
+class VoiceCloneEngine(TtsEngine):
+
+    def __init__(self, model_name: str = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16",
+                 ref_audio: str = "", ref_text: str = ""):
+        # ##################################################################
+        # init
+        # load the base model with reference audio and text for cloning
+        self.model_name = model_name
+        self.ref_audio = ref_audio
+        self.ref_text = ref_text
+        self._model = None
+
+    def _get_model(self):
+        # ##################################################################
+        # get model
+        # lazy load model using mlx-audio
+        if self._model is None:
+            from mlx_audio.tts.utils import load_model
+            self._model = load_model(self.model_name)
+        return self._model
+
+    def synthesize(self, text: str, output_path: Path, language: str = "English",
+                   temperature: float = DEFAULT_TEMPERATURE, speed: float = DEFAULT_SPEED) -> Path:
+        # ##################################################################
+        # synthesize
+        # generate speech from text using voice cloning
+        import mlx.core as mx
+
+        model = self._get_model()
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # load reference audio as mlx array
+        ref_data, _ = sf.read(self.ref_audio)
+        ref_audio_array = mx.array(ref_data.astype(np.float32))
+
+        # split text into chunks for memory-efficient processing
+        chunks = split_into_chunks(text)
+        chunk_wavs: list[Path] = []
+
+        try:
+            for i, chunk in enumerate(chunks):
+                print(f"Processing chunk {i + 1}/{len(chunks)}...")
+
+                # generate audio using voice cloning API
+                # ref_text is required for voice cloning to work
+                results = list(model.generate(
+                    text=chunk,
+                    ref_audio=ref_audio_array,
+                    ref_text=self.ref_text,
+                    lang_code=language.lower()[:2],  # "en" for English
+                    temperature=temperature,
+                ))
+
+                if not results:
+                    raise RuntimeError(f"No audio generated for chunk {i + 1}")
+
+                # convert mlx array to numpy for soundfile
+                audio = results[0].audio
+                if hasattr(audio, 'tolist'):
+                    audio_np = np.array(audio.tolist(), dtype=np.float32)
+                else:
+                    audio_np = np.array(audio, dtype=np.float32)
+
+                # write chunk to temp file immediately to free memory
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                    chunk_wav = Path(tmp.name)
+                sf.write(str(chunk_wav), audio_np, model.sample_rate)
+                chunk_wavs.append(chunk_wav)
+
+                # free memory from this chunk
+                del results, audio, audio_np
+                gc.collect()
+                mx.clear_cache()
+
+            # concatenate all chunk wavs into final output
+            if output_path.suffix.lower() == ".mp3":
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                    combined_wav = Path(tmp.name)
+                concatenate_wav_files(chunk_wavs, combined_wav)
+                convert_wav_to_mp3(combined_wav, output_path, normalize=True, speed=speed)
                 combined_wav.unlink()
             else:
                 concatenate_wav_files(chunk_wavs, output_path)
@@ -206,13 +440,36 @@ class QwenTtsEngine(TtsEngine):
 # ##################################################################
 # get engine
 # factory function to get a tts engine by model name and voice
-def get_engine(model: str = "qwen", voice: str = DEFAULT_VOICE) -> TtsEngine:
+def get_engine(model: str = "qwen", voice: str = DEFAULT_VOICE, voice_description: str | None = None) -> TtsEngine:
     # ##################################################################
     # get engine
     # return the appropriate engine implementation for the given model and voice
+    # if voice_description is provided, use VoiceDesignEngine
+    # if voice is a registered custom voice name, look up its description or ref_audio
+
+    # check if voice is a registered custom voice
+    custom_voice = get_voice_description(voice)
+    if custom_voice:
+        voice_type = custom_voice.get("type", "description")
+        if voice_type == "clone":
+            # voice cloning from audio samples (requires ref_audio and ref_text)
+            return VoiceCloneEngine(
+                ref_audio=custom_voice["ref_audio"],
+                ref_text=custom_voice.get("ref_text", ""),
+            )
+        else:
+            # voice design from description
+            return VoiceDesignEngine(voice_description=custom_voice["description"])
+
+    # explicit voice description provided
+    if voice_description:
+        return VoiceDesignEngine(voice_description=voice_description)
+
+    # standard qwen voices
     if model == "qwen" or model.startswith("mlx-community/"):
         model_name = model if model.startswith("mlx-community/") else "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16"
         return QwenTtsEngine(model_name=model_name, voice=voice)
+
     raise ValueError(f"Unknown model: {model}. Supported: qwen")
 
 

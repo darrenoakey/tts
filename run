@@ -53,7 +53,7 @@ def command_install(_: argparse.Namespace) -> int:
 # uses file lock to ensure only one instance runs at a time
 def command_tts(args: argparse.Namespace) -> int:
     _ensure_venv()
-    cmd = [str(VENV_PYTHON), "-m", "src.tts", str(args.input)]
+    cmd = [str(VENV_PYTHON), "-m", "src.tts", "generate", str(args.input)]
     if args.output:
         cmd.extend(["-o", str(args.output)])
     if args.model:
@@ -64,12 +64,45 @@ def command_tts(args: argparse.Namespace) -> int:
         cmd.extend(["-l", args.language])
     if args.temperature:
         cmd.extend(["-t", str(args.temperature)])
+    if args.speed:
+        cmd.extend(["-s", str(args.speed)])
+    if args.voice_description:
+        cmd.extend(["-d", args.voice_description])
 
     with open(LOCK_FILE, "w") as lock:
         print("Waiting for TTS lock...", file=sys.stderr, flush=True)
         fcntl.flock(lock, fcntl.LOCK_EX)
         print("Lock acquired, starting TTS", file=sys.stderr, flush=True)
         return _run_venv(cmd, env={"PYTHONPATH": str(PROJECT_ROOT)})
+
+
+# ##################################################################
+# command register voice
+# register a custom voice description
+def command_register_voice(args: argparse.Namespace) -> int:
+    _ensure_venv()
+    cmd = [str(VENV_PYTHON), "-m", "src.tts", "register-voice", args.name, args.description]
+    if args.speed:
+        cmd.extend(["-s", str(args.speed)])
+    return _run_venv(cmd, env={"PYTHONPATH": str(PROJECT_ROOT)})
+
+
+# ##################################################################
+# command list voices
+# list available voices
+def command_list_voices(_: argparse.Namespace) -> int:
+    _ensure_venv()
+    cmd = [str(VENV_PYTHON), "-m", "src.tts", "list-voices"]
+    return _run_venv(cmd, env={"PYTHONPATH": str(PROJECT_ROOT)})
+
+
+# ##################################################################
+# command scrape voice
+# scrape voice samples from moviesoundclips.net and create a cloned voice
+def command_scrape_voice(args: argparse.Namespace) -> int:
+    _ensure_venv()
+    cmd = [str(VENV_PYTHON), "-m", "src.voice_scraper", args.name]
+    return _run_venv(cmd, env={"PYTHONPATH": str(PROJECT_ROOT)})
 
 
 # ##################################################################
@@ -122,10 +155,25 @@ def main(argv: list[str]) -> int:
     p_tts.add_argument("input", type=Path, help="Input text file")
     p_tts.add_argument("-o", "--output", type=Path, help="Output audio file")
     p_tts.add_argument("-m", "--model", help="TTS model (default: qwen)")
-    p_tts.add_argument("-v", "--voice", help="Voice: aiden, dylan, eric, ono_anna, ryan, serena, sohee, uncle_fu, vivian")
+    p_tts.add_argument("-v", "--voice", help="Voice name (built-in or custom)")
     p_tts.add_argument("-l", "--language", help="Language (default: English)")
-    p_tts.add_argument("-t", "--temperature", type=float, help="Temperature for variability (default: 0.9)")
+    p_tts.add_argument("-t", "--temperature", type=float, help="Temperature (default: 0.9)")
+    p_tts.add_argument("-s", "--speed", type=float, help="Speed multiplier 0.5-2.0 (default: 1.0)")
+    p_tts.add_argument("-d", "--voice-description", help="Voice description for on-the-fly voice design")
     p_tts.set_defaults(func=command_tts)
+
+    p_reg = sub.add_parser("register-voice", help="Register a custom voice")
+    p_reg.add_argument("name", help="Voice name (e.g., 'bob')")
+    p_reg.add_argument("description", help="Voice description")
+    p_reg.add_argument("-s", "--speed", type=float, default=1.0, help="Default speed for this voice")
+    p_reg.set_defaults(func=command_register_voice)
+
+    p_list = sub.add_parser("list-voices", help="List available voices")
+    p_list.set_defaults(func=command_list_voices)
+
+    p_scrape = sub.add_parser("scrape-voice", help="Scrape voice samples from moviesoundclips.net")
+    p_scrape.add_argument("name", help="Person name to search for (e.g., 'Nathan Fillion')")
+    p_scrape.set_defaults(func=command_scrape_voice)
 
     p_test = sub.add_parser("test", help="Run a single test target")
     p_test.add_argument("target", help="e.g. src/tts_engine_test.py::test_get_engine_returns_qwen_for_default")

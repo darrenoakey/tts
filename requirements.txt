@@ -5,3 +5,4 @@ setproctitle
 pytest
 ruff
 numpy<2.3
+requests

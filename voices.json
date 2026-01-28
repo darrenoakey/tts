@@ -1,0 +1,12 @@
+{
+  "bob": {
+    "description": "A deep voiced man with a subtle Australian accent and a measured speaking style.",
+    "speed": 1.2
+  },
+  "nathan_fillion": {
+    "type": "clone",
+    "ref_audio": "/Volumes/T9/darrenoakey/src/tts/local/movie/nathan_fillion/clip_001_24k.wav",
+    "ref_text": "Murder, political intrigue, cash payments, and now a mysterious storage locker?",
+    "speed": 1.0
+  }
+}
