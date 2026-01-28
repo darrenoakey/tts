@@ -1,12 +1,20 @@
 import gc
 import json
+import logging
 import re
 import subprocess
 import tempfile
+import warnings
+from abc import ABC, abstractmethod
+from pathlib import Path
+
 import numpy as np
 import soundfile as sf
-from pathlib import Path
-from abc import ABC, abstractmethod
+
+# suppress transformers warnings about model type and tokenizer regex
+# must be configured before transformers is imported by mlx_audio
+logging.getLogger('transformers').setLevel(logging.ERROR)
+warnings.filterwarnings('ignore', module='transformers')
 
 
 # available voices for qwen3-tts customvoice model (mlx-audio)
@@ -379,6 +387,7 @@ class VoiceCloneEngine(TtsEngine):
         self.ref_audio = ref_audio
         self.ref_text = ref_text
         self._model = None
+        self._ref_audio_array = None  # cached resampled reference audio
 
     def _get_model(self):
         # ##################################################################
@@ -401,9 +410,22 @@ class VoiceCloneEngine(TtsEngine):
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # load reference audio as mlx array
-        ref_data, _ = sf.read(self.ref_audio)
-        ref_audio_array = mx.array(ref_data.astype(np.float32))
+        # load and cache reference audio as mlx array (resampled to model sample rate)
+        if self._ref_audio_array is None:
+            ref_data, sr = sf.read(self.ref_audio)
+            # convert stereo to mono if needed
+            if len(ref_data.shape) > 1:
+                ref_data = np.mean(ref_data, axis=1)
+            # resample to model sample rate (24kHz) if needed
+            if sr != model.sample_rate:
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                    resampled_path = Path(tmp.name)
+                cmd = ["ffmpeg", "-y", "-i", self.ref_audio, "-ar", str(model.sample_rate), "-ac", "1", str(resampled_path)]
+                subprocess.run(cmd, capture_output=True, check=True)
+                ref_data, _ = sf.read(resampled_path)
+                resampled_path.unlink()
+            self._ref_audio_array = mx.array(ref_data.astype(np.float32))
+        ref_audio_array = self._ref_audio_array
 
         # split text into chunks for memory-efficient processing
         chunks = split_into_chunks(text)

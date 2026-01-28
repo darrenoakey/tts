@@ -21,6 +21,8 @@ def _run_venv(cmd: list[str], env: dict | None = None) -> int:
     run_env = os.environ.copy()
     run_env["VIRTUAL_ENV"] = str(VENV)
     run_env["PATH"] = f"{VENV / 'bin'}:{run_env.get('PATH', '')}"
+    # suppress transformers warnings about model type and tokenizer regex
+    run_env["TRANSFORMERS_VERBOSITY"] = "error"
     if env:
         run_env.update(env)
     return subprocess.call(cmd, cwd=PROJECT_ROOT, env=run_env)
