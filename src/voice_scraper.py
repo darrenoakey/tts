@@ -173,11 +173,11 @@ def create_voice_from_person(name: str, speed: float = 1.0) -> str:
     wav_files = download_clips(urls, output_dir)
     print(f"Downloaded {len(wav_files)} clips")
 
-    # select best clips and clean them (max 15 seconds for optimal voice cloning)
+    # select best clips and clean them (40 seconds of best quality audio)
     from src.audio_quality import prepare_reference_audio
     reference_path = output_dir / "reference_clean.wav"
-    print("\nPreparing clean reference audio (selecting best clips, removing noise)...")
-    prepare_reference_audio(output_dir, reference_path, max_duration=15.0)
+    print("\nPreparing clean reference audio (selecting best 40s of clips, removing noise)...")
+    prepare_reference_audio(output_dir, reference_path, max_duration=40.0)
 
     # transcribe the reference audio for voice cloning
     print("\nTranscribing reference audio with Whisper...")

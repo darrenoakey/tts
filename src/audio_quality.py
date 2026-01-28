@@ -101,9 +101,9 @@ def analyze_clip(audio_path: Path) -> dict:
 
 
 # ##################################################################
-# reduce noise
-# apply noise reduction to audio file
-def reduce_noise(input_path: Path, output_path: Path, sr_target: int = 24000) -> Path:
+# reduce noise (basic)
+# apply basic noise reduction using noisereduce library
+def reduce_noise_basic(input_path: Path, output_path: Path, sr_target: int = 24000) -> Path:
     audio, sr = sf.read(input_path)
 
     # convert to mono if stereo
@@ -139,6 +139,51 @@ def reduce_noise(input_path: Path, output_path: Path, sr_target: int = 24000) ->
         raise RuntimeError(f"ffmpeg resample failed: {result.stderr}")
 
     return output_path
+
+
+# ##################################################################
+# enhance audio (AI-based)
+# use resemble-enhance for high-quality audio enhancement
+ENHANCE_TOOL = Path.home() / "src" / "audio-enhance" / "run"
+
+
+def enhance_audio(input_path: Path, output_path: Path, sr_target: int = 24000) -> Path:
+    if not ENHANCE_TOOL.exists():
+        print(f"  Warning: {ENHANCE_TOOL} not found, falling back to basic noise reduction")
+        return reduce_noise_basic(input_path, output_path, sr_target)
+
+    # create temp file for enhanced output
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        tmp_enhanced = Path(tmp.name)
+
+    # run resemble-enhance
+    cmd = [str(ENHANCE_TOOL), "enhance", str(input_path), str(tmp_enhanced)]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        print(f"  Warning: resemble-enhance failed, falling back to basic: {result.stderr[:200]}")
+        tmp_enhanced.unlink(missing_ok=True)
+        return reduce_noise_basic(input_path, output_path, sr_target)
+
+    # resample to target sample rate
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "ffmpeg", "-y", "-i", str(tmp_enhanced),
+        "-ar", str(sr_target),
+        "-ac", "1",  # mono
+        str(output_path)
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    tmp_enhanced.unlink()
+
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg resample failed: {result.stderr}")
+
+    return output_path
+
+
+# default to AI enhancement
+reduce_noise = enhance_audio
 
 
 # ##################################################################
@@ -195,12 +240,12 @@ def prepare_reference_audio(
     for c in selected:
         print(f"  {c['path'].name}: {c['duration']:.1f}s, SNR={c['snr']:.1f}dB, quality={c['quality_score']:.1f}")
 
-    # clean each selected clip
-    print("\nCleaning clips...")
+    # enhance each selected clip with AI
+    print("\nEnhancing clips with AI (this may take a few minutes per clip)...")
     clean_paths = []
-    for c in selected:
-        clean_path = c["path"].parent / f"{c['path'].stem}_clean.wav"
-        print(f"  Cleaning {c['path'].name}...")
+    for i, c in enumerate(selected):
+        clean_path = c["path"].parent / f"{c['path'].stem}_enhanced.wav"
+        print(f"  [{i+1}/{len(selected)}] Enhancing {c['path'].name} ({c['duration']:.1f}s)...")
         reduce_noise(c["path"], clean_path)
         clean_paths.append(clean_path)
 
