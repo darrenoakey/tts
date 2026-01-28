@@ -7,6 +7,7 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 ```bash
 ./run install    # Set up venv and deps
 ./run tts input.txt -o output.mp3
+./run tts "Hello world" -v aiden   # Inline text (no file needed)
 ```
 
 ## Key Files
@@ -46,10 +47,12 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 - AI enhancement via resemble-enhance (`~/src/audio-enhance/run enhance input.wav output.wav`)
 - Run `python -m src.audio_quality <clip_dir> <max_duration>` to prepare clean reference
 
-**Voice scraper commands**:
+**Voice commands**:
+- `./run clone-voice myvoice recording.wav` - Create cloned voice from your own audio
 - `./run scrape-voice "Nathan Fillion"` - Create cloned voice from celebrity
 - `./run list-celebs` - List all 58 available celebrities on moviesoundclips.net
 - `./run list-voices` - Show built-in, designed, and cloned voices
+- `script.txt` - Phonetically balanced text for recording (~40 seconds)
 
 ## Models
 
