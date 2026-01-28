@@ -1,5 +1,5 @@
 import pytest
-from src.tts_engine import get_engine, QwenTtsEngine, TtsEngine, QWEN_VOICES, DEFAULT_VOICE
+from src.tts_engine import get_engine, QwenTtsEngine, TtsEngine, QWEN_VOICES, DEFAULT_VOICE, split_into_chunks
 
 
 # ##################################################################
@@ -83,6 +83,47 @@ def test_tts_engine_interface():
     assert hasattr(TtsEngine, "synthesize")
     with pytest.raises(TypeError):
         TtsEngine()
+
+
+# ##################################################################
+# test split into chunks with short text
+# verify short text returns single chunk
+def test_split_into_chunks_short_text():
+    text = "Hello world. This is a test."
+    chunks = split_into_chunks(text, sentences_per_chunk=5)
+    assert len(chunks) == 1
+    assert chunks[0] == text
+
+
+# ##################################################################
+# test split into chunks with long text
+# verify long text is split into multiple chunks
+def test_split_into_chunks_long_text():
+    text = "Sentence one. Sentence two. Sentence three. Sentence four. Sentence five. Sentence six."
+    chunks = split_into_chunks(text, sentences_per_chunk=2)
+    assert len(chunks) == 3
+    assert chunks[0] == "Sentence one. Sentence two."
+    assert chunks[1] == "Sentence three. Sentence four."
+    assert chunks[2] == "Sentence five. Sentence six."
+
+
+# ##################################################################
+# test split into chunks handles different punctuation
+# verify splitting works with exclamation and question marks
+def test_split_into_chunks_different_punctuation():
+    text = "Hello! How are you? I am fine. That is great!"
+    chunks = split_into_chunks(text, sentences_per_chunk=2)
+    assert len(chunks) == 2
+    assert chunks[0] == "Hello! How are you?"
+    assert chunks[1] == "I am fine. That is great!"
+
+
+# ##################################################################
+# test split into chunks with empty text
+# verify empty text returns empty list
+def test_split_into_chunks_empty():
+    chunks = split_into_chunks("", sentences_per_chunk=5)
+    assert chunks == []
 
 
 # ##################################################################

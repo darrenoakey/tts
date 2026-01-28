@@ -7,3 +7,5 @@ __pycache__/
 .eggs/
 dist/
 build/
+.tts.lock
+test_large.*
