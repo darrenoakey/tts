@@ -25,8 +25,8 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 ## Voices
 
 Available for CustomVoice model:
-- English: aiden, ryan
-- Chinese: vivian, serena, uncle_fu, dylan, eric
+- English: aiden, ryan, ono_anna, sohee
+- Chinese: vivian, serena, uncle_fu, dylan (beijing dialect), eric (sichuan dialect)
 
 ## Models
 
@@ -38,3 +38,6 @@ Smaller/faster: `mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16`
 
 - Model downloads ~5GB on first run (cached in `~/.cache/huggingface/`)
 - Memory monitoring script (`run_with_memory_monitor.sh`) useful for debugging OOM issues
+- **Sample rate is 24kHz** (not 12kHz - the "12Hz" in model name is token rate)
+- Audio normalization uses ffmpeg `loudnorm` and `alimiter` filters to prevent clipping
+- Temperature parameter (`-t`) controls synthesis variability (default 0.9)
