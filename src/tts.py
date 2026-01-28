@@ -29,17 +29,17 @@ def main(argv: list[str]) -> int:
     sub = parser.add_subparsers(dest="command")
 
     # generate command (default)
-    p_gen = sub.add_parser("generate", help="Generate speech from text file")
+    p_gen = sub.add_parser("generate", help="Generate speech from text or file")
     p_gen.add_argument(
         "input",
-        type=Path,
-        help="Input text file to convert",
+        type=str,
+        help="Input text file or inline text (e.g., 'hello world')",
     )
     p_gen.add_argument(
         "-o", "--output",
         type=Path,
         default=None,
-        help="Output audio file (default: input with .mp3 extension)",
+        help="Output audio file (default: input.mp3 or output.mp3 for inline text)",
     )
     p_gen.add_argument(
         "-m", "--model",
@@ -139,16 +139,32 @@ def main(argv: list[str]) -> int:
     if args.command == "generate":
         try:
             from src.convert import convert_text_to_speech
-            output_path = convert_text_to_speech(
-                input_path=args.input,
-                output_path=args.output,
-                model=args.model,
-                language=args.language,
-                voice=args.voice,
-                temperature=args.temperature,
-                speed=args.speed,
-                voice_description=args.voice_description,
-            )
+            # check if input is a file or inline text
+            input_path = Path(args.input)
+            if input_path.exists():
+                # it's a file
+                output_path = convert_text_to_speech(
+                    input_path=input_path,
+                    output_path=args.output,
+                    model=args.model,
+                    language=args.language,
+                    voice=args.voice,
+                    temperature=args.temperature,
+                    speed=args.speed,
+                    voice_description=args.voice_description,
+                )
+            else:
+                # treat as inline text
+                output_path = convert_text_to_speech(
+                    text=str(args.input),
+                    output_path=args.output,
+                    model=args.model,
+                    language=args.language,
+                    voice=args.voice,
+                    temperature=args.temperature,
+                    speed=args.speed,
+                    voice_description=args.voice_description,
+                )
             print(f"{Fore.GREEN}✓{Style.RESET_ALL} Generated: {Fore.CYAN}{output_path}{Style.RESET_ALL}")
             return 0
         except FileNotFoundError as err:

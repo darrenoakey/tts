@@ -106,6 +106,52 @@ def command_scrape_voice(args: argparse.Namespace) -> int:
 
 
 # ##################################################################
+# command clone voice
+# create a cloned voice from an audio file
+def command_clone_voice(args: argparse.Namespace) -> int:
+    _ensure_venv()
+    # resolve to absolute path
+    audio_path = Path(args.audio).resolve()
+    if not audio_path.exists():
+        print(f"Error: Audio file not found: {audio_path}")
+        return 1
+    code = f"""
+import json
+from pathlib import Path
+from colorama import Fore, Style, init
+init(autoreset=True)
+
+# transcribe the audio
+print(f"{{Fore.BLUE}}📝 Transcribing audio with Whisper...{{Style.RESET_ALL}}")
+import mlx_whisper
+result = mlx_whisper.transcribe(
+    "{audio_path}",
+    path_or_hf_repo="mlx-community/whisper-large-v3-turbo",
+)
+ref_text = result["text"].strip()
+print(f"{{Fore.GREEN}}✓{{Style.RESET_ALL}} Transcription: {{Style.DIM}}{{ref_text[:80]}}...{{Style.RESET_ALL}}" if len(ref_text) > 80 else f"{{Fore.GREEN}}✓{{Style.RESET_ALL}} Transcription: {{Style.DIM}}{{ref_text}}{{Style.RESET_ALL}}")
+
+# register the voice
+from src.tts_engine import VOICE_REGISTRY_PATH
+registry = {{}}
+if VOICE_REGISTRY_PATH.exists():
+    registry = json.loads(VOICE_REGISTRY_PATH.read_text())
+
+registry["{args.name}"] = {{
+    "type": "clone",
+    "ref_audio": "{audio_path}",
+    "ref_text": ref_text,
+    "speed": {args.speed},
+}}
+VOICE_REGISTRY_PATH.write_text(json.dumps(registry, indent=2))
+
+print(f"\\n{{Fore.GREEN}}✓{{Style.RESET_ALL}} Registered voice '{{Fore.CYAN}}{args.name}{{Style.RESET_ALL}}'")
+print(f"{{Fore.WHITE}}Use with:{{Style.RESET_ALL}} {{Fore.CYAN}}./run tts \\"hello world\\" -v {args.name}{{Style.RESET_ALL}}\\n")
+"""
+    return _run_venv([str(VENV_PYTHON), "-c", code], env={"PYTHONPATH": str(PROJECT_ROOT)})
+
+
+# ##################################################################
 # command list celebs
 # list available celebrities from moviesoundclips.net
 def command_list_celebs(_: argparse.Namespace) -> int:
@@ -192,6 +238,12 @@ def main(argv: list[str]) -> int:
     p_scrape = sub.add_parser("scrape-voice", help="Scrape voice samples from moviesoundclips.net")
     p_scrape.add_argument("name", help="Person name to search for (e.g., 'Nathan Fillion')")
     p_scrape.set_defaults(func=command_scrape_voice)
+
+    p_clone = sub.add_parser("clone-voice", help="Create a cloned voice from an audio file")
+    p_clone.add_argument("name", help="Voice name (e.g., 'myvoice')")
+    p_clone.add_argument("audio", help="Path to audio file (WAV recommended)")
+    p_clone.add_argument("-s", "--speed", type=float, default=1.0, help="Default speed for this voice")
+    p_clone.set_defaults(func=command_clone_voice)
 
     p_celebs = sub.add_parser("list-celebs", help="List available celebrities from moviesoundclips.net")
     p_celebs.set_defaults(func=command_list_celebs)
