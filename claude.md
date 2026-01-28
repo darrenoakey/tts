@@ -43,8 +43,13 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 
 **Audio quality for voice cloning**:
 - Use `src/audio_quality.py` to analyze clips by SNR and select best quality
-- Noise reduction applied automatically with noisereduce library
+- AI enhancement via resemble-enhance (`~/src/audio-enhance/run enhance input.wav output.wav`)
 - Run `python -m src.audio_quality <clip_dir> <max_duration>` to prepare clean reference
+
+**Voice scraper commands**:
+- `./run scrape-voice "Nathan Fillion"` - Create cloned voice from celebrity
+- `./run list-celebs` - List all 58 available celebrities on moviesoundclips.net
+- `./run list-voices` - Show built-in, designed, and cloned voices
 
 ## Models
 
