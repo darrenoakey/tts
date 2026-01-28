@@ -1,6 +1,6 @@
 # TTS Project
 
-Text-to-speech using Qwen3-TTS models.
+Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 
 ## Quick Start
 
@@ -17,16 +17,24 @@ Text-to-speech using Qwen3-TTS models.
 
 ## Architecture
 
+- **MLX backend**: Uses mlx-audio for efficient Apple Silicon inference
 - **Chunked processing**: Long texts split into ~3 sentence chunks to prevent memory spikes
 - **File locking**: Only one TTS instance runs at a time (uses `.tts.lock`)
 - **Lazy model loading**: Model loaded on first synthesis, reused across calls
 
 ## Voices
 
-Available for CustomVoice model: aiden, dylan, eric, ono_anna, ryan, serena, sohee, uncle_fu, vivian
+Available for CustomVoice model:
+- English: aiden, ryan
+- Chinese: vivian, serena, uncle_fu, dylan, eric
+
+## Models
+
+Default: `mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16`
+
+Smaller/faster: `mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16`
 
 ## Gotchas
 
-- MPS (Apple Silicon) falls back to CPU - MPS support for qwen-tts is experimental
-- Flash attention only used on CUDA, otherwise uses standard attention via shim
+- Model downloads ~5GB on first run (cached in `~/.cache/huggingface/`)
 - Memory monitoring script (`run_with_memory_monitor.sh`) useful for debugging OOM issues

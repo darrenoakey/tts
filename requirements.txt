@@ -1,5 +1,5 @@
-qwen-tts
-torch
+mlx-audio
+mlx
 soundfile
 setproctitle
 pytest

@@ -38,8 +38,8 @@ def test_qwen_engine_has_correct_model_name():
 # test qwen engine accepts custom model name
 # verify qwen engine allows overriding the model name
 def test_qwen_engine_accepts_custom_model_name():
-    engine = QwenTtsEngine(model_name="Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice")
-    assert engine.model_name == "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+    engine = QwenTtsEngine(model_name="mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16")
+    assert engine.model_name == "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16"
 
 
 # ##################################################################
