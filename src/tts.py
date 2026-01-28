@@ -5,7 +5,7 @@ from pathlib import Path
 
 import setproctitle
 
-from src.tts_engine import QWEN_VOICES, DEFAULT_VOICE
+from src.tts_engine import QWEN_VOICES, DEFAULT_VOICE, DEFAULT_TEMPERATURE
 
 
 # ##################################################################
@@ -51,6 +51,12 @@ def main(argv: list[str]) -> int:
         default="English",
         help="Language for synthesis (default: English)",
     )
+    parser.add_argument(
+        "-t", "--temperature",
+        type=float,
+        default=DEFAULT_TEMPERATURE,
+        help=f"Temperature for synthesis variability (default: {DEFAULT_TEMPERATURE})",
+    )
 
     args = parser.parse_args(argv)
 
@@ -62,6 +68,7 @@ def main(argv: list[str]) -> int:
             model=args.model,
             language=args.language,
             voice=args.voice,
+            temperature=args.temperature,
         )
         print(f"Generated: {output_path}")
         return 0

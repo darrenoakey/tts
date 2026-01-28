@@ -1,5 +1,5 @@
 from pathlib import Path
-from src.tts_engine import get_engine, DEFAULT_VOICE
+from src.tts_engine import get_engine, DEFAULT_VOICE, DEFAULT_TEMPERATURE
 
 
 # ##################################################################
@@ -11,6 +11,7 @@ def convert_text_to_speech(
     model: str = "qwen",
     language: str = "English",
     voice: str = DEFAULT_VOICE,
+    temperature: float = DEFAULT_TEMPERATURE,
 ) -> Path:
     # ##################################################################
     # convert text to speech
@@ -29,7 +30,7 @@ def convert_text_to_speech(
         output_path = Path(output_path)
 
     engine = get_engine(model, voice=voice)
-    return engine.synthesize(text, output_path, language=language)
+    return engine.synthesize(text, output_path, language=language, temperature=temperature)
 
 
 # ##################################################################

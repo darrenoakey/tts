@@ -9,17 +9,15 @@ from abc import ABC, abstractmethod
 
 
 # available voices for qwen3-tts customvoice model (mlx-audio)
-# english: aiden, ryan
-# chinese: vivian, serena, uncle_fu, dylan, eric
-QWEN_VOICES = ["aiden", "ryan", "vivian", "serena", "uncle_fu", "dylan", "eric"]
+# english: aiden, ryan, ono_anna, sohee
+# chinese: vivian, serena, uncle_fu, dylan (beijing dialect), eric (sichuan dialect)
+QWEN_VOICES = ["aiden", "ryan", "ono_anna", "sohee", "vivian", "serena", "uncle_fu", "dylan", "eric"]
 DEFAULT_VOICE = "aiden"
+DEFAULT_TEMPERATURE = 0.9
 
 # chunk size for processing long texts (in sentences)
 # smaller chunks = more stable memory but slightly more overhead
 DEFAULT_CHUNK_SENTENCES = 3
-
-# sample rate for qwen3-tts models
-SAMPLE_RATE = 12000
 
 
 # ##################################################################
@@ -47,13 +45,23 @@ def split_into_chunks(text: str, sentences_per_chunk: int = DEFAULT_CHUNK_SENTEN
 
 # ##################################################################
 # convert wav to mp3
-# use ffmpeg to compress wav audio to mp3 format
-def convert_wav_to_mp3(wav_path: Path, mp3_path: Path) -> Path:
-    cmd = [
-        "ffmpeg", "-y", "-i", str(wav_path),
-        "-codec:a", "libmp3lame", "-qscale:a", "2",
-        str(mp3_path)
-    ]
+# use ffmpeg to compress wav audio to mp3 format with audio normalization
+def convert_wav_to_mp3(wav_path: Path, mp3_path: Path, normalize: bool = True) -> Path:
+    if normalize:
+        # use ffmpeg's loudnorm filter for EBU R128 loudness normalization
+        # and alimiter to prevent clipping - very conservative settings
+        cmd = [
+            "ffmpeg", "-y", "-i", str(wav_path),
+            "-af", "loudnorm=I=-28:TP=-9:LRA=7,alimiter=limit=0.4:attack=3:release=100",
+            "-codec:a", "libmp3lame", "-qscale:a", "2",
+            str(mp3_path)
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-y", "-i", str(wav_path),
+            "-codec:a", "libmp3lame", "-qscale:a", "2",
+            str(mp3_path)
+        ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg failed: {result.stderr}")
@@ -96,7 +104,7 @@ def concatenate_wav_files(wav_paths: list[Path], output_path: Path) -> Path:
 class TtsEngine(ABC):
 
     @abstractmethod
-    def synthesize(self, text: str, output_path: Path, language: str = "English") -> Path:
+    def synthesize(self, text: str, output_path: Path, language: str = "English", temperature: float = DEFAULT_TEMPERATURE) -> Path:
         # ##################################################################
         # synthesize
         # convert text to speech and write to output_path, returning the path
@@ -127,7 +135,7 @@ class QwenTtsEngine(TtsEngine):
             self._model = load_model(self.model_name)
         return self._model
 
-    def synthesize(self, text: str, output_path: Path, language: str = "English") -> Path:
+    def synthesize(self, text: str, output_path: Path, language: str = "English", temperature: float = DEFAULT_TEMPERATURE) -> Path:
         # ##################################################################
         # synthesize
         # generate speech from text using qwen model and save as mp3
@@ -151,6 +159,7 @@ class QwenTtsEngine(TtsEngine):
                     text=chunk,
                     language=language,
                     speaker=self.voice,
+                    temperature=temperature,
                 ))
 
                 if not results:
@@ -167,7 +176,7 @@ class QwenTtsEngine(TtsEngine):
                 # write chunk to temp file immediately to free memory
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                     chunk_wav = Path(tmp.name)
-                sf.write(str(chunk_wav), audio_np, SAMPLE_RATE)
+                sf.write(str(chunk_wav), audio_np, model.sample_rate)
                 chunk_wavs.append(chunk_wav)
 
                 # free memory from this chunk
@@ -180,7 +189,7 @@ class QwenTtsEngine(TtsEngine):
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                     combined_wav = Path(tmp.name)
                 concatenate_wav_files(chunk_wavs, combined_wav)
-                convert_wav_to_mp3(combined_wav, output_path)
+                convert_wav_to_mp3(combined_wav, output_path, normalize=True)
                 combined_wav.unlink()
             else:
                 concatenate_wav_files(chunk_wavs, output_path)

@@ -62,6 +62,8 @@ def command_tts(args: argparse.Namespace) -> int:
         cmd.extend(["-v", args.voice])
     if args.language:
         cmd.extend(["-l", args.language])
+    if args.temperature:
+        cmd.extend(["-t", str(args.temperature)])
 
     with open(LOCK_FILE, "w") as lock:
         print("Waiting for TTS lock...", file=sys.stderr, flush=True)
@@ -122,6 +124,7 @@ def main(argv: list[str]) -> int:
     p_tts.add_argument("-m", "--model", help="TTS model (default: qwen)")
     p_tts.add_argument("-v", "--voice", help="Voice: aiden, dylan, eric, ono_anna, ryan, serena, sohee, uncle_fu, vivian")
     p_tts.add_argument("-l", "--language", help="Language (default: English)")
+    p_tts.add_argument("-t", "--temperature", type=float, help="Temperature for variability (default: 0.9)")
     p_tts.set_defaults(func=command_tts)
 
     p_test = sub.add_parser("test", help="Run a single test target")
