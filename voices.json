@@ -5,8 +5,8 @@
   },
   "nathan_fillion": {
     "type": "clone",
-    "ref_audio": "/Volumes/T9/darrenoakey/src/tts/local/movie/nathan_fillion/clip_001_24k.wav",
-    "ref_text": "Murder, political intrigue, cash payments, and now a mysterious storage locker?",
+    "ref_audio": "/Volumes/T9/darrenoakey/src/tts/local/movie/nathan_fillion/reference_clean.wav",
+    "ref_text": "Okay, um, I'm lost. I'm angry and I'm armed. What was that? You want to run this ship? Yes. Well, you can't.",
     "speed": 1.0
   }
 }

@@ -173,21 +173,22 @@ def create_voice_from_person(name: str, speed: float = 1.0) -> str:
     wav_files = download_clips(urls, output_dir)
     print(f"Downloaded {len(wav_files)} clips")
 
-    # concatenate clips
-    combined_path = output_dir / "combined.wav"
-    print(f"Concatenating clips to {combined_path}...")
-    concatenate_with_silence(wav_files, combined_path)
+    # select best clips and clean them (max 15 seconds for optimal voice cloning)
+    from src.audio_quality import prepare_reference_audio
+    reference_path = output_dir / "reference_clean.wav"
+    print("\nPreparing clean reference audio (selecting best clips, removing noise)...")
+    prepare_reference_audio(output_dir, reference_path, max_duration=15.0)
 
     # transcribe the reference audio for voice cloning
-    print("Transcribing reference audio with Whisper...")
-    ref_text = transcribe_audio(combined_path)
+    print("\nTranscribing reference audio with Whisper...")
+    ref_text = transcribe_audio(reference_path)
     print(f"Transcription: {ref_text[:100]}..." if len(ref_text) > 100 else f"Transcription: {ref_text}")
 
     # register the voice with a reference to the audio file and transcription
     # voice cloning requires both ref_audio and ref_text
     registry_data = {
         "type": "clone",
-        "ref_audio": str(combined_path),
+        "ref_audio": str(reference_path),
         "ref_text": ref_text,
         "speed": speed,
     }

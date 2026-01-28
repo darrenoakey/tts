@@ -1,8 +1,10 @@
 mlx-audio
 mlx
+mlx-whisper
 soundfile
 setproctitle
 pytest
 ruff
 numpy<2.3
 requests
+noisereduce
