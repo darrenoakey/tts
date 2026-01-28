@@ -67,3 +67,6 @@ Smaller/faster: `mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16`
 - **Sample rate is 24kHz** (not 12kHz - the "12Hz" in model name is token rate)
 - Audio normalization uses ffmpeg `loudnorm` and `alimiter` filters to prevent clipping
 - Temperature parameter (`-t`) controls synthesis variability (default 0.9)
+- **SSML not supported** - Qwen3-TTS uses natural language instructions for prosody, not XML tags
+- Reference audio is auto-resampled from any format to 24kHz mono (cached after first use)
+- Stereo recordings are automatically converted to mono for voice cloning
