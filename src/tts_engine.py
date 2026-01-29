@@ -387,6 +387,7 @@ class VoiceCloneEngine(TtsEngine):
         # ##################################################################
         # init
         # load the base model with reference audio and text for cloning
+        # NOTE: 1.7B Base model exists but mlx-audio doesn't support it yet (missing speech_tokenizer params)
         self.model_name = model_name
         self.ref_audio = ref_audio
         self.ref_text = ref_text
