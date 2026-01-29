@@ -172,7 +172,7 @@ def concatenate_with_silence(wav_files: list[Path], output_path: Path, silence_m
 # ##################################################################
 # create voice from person
 # scrape clips and create a cloned voice
-def create_voice_from_person(name: str, speed: float = 1.0) -> str:
+def create_voice_from_person(name: str, speed: float = 1.0, quality: str = "ultra") -> str:
     print(f"\n{Fore.BLUE}🔍 Searching for '{Fore.CYAN}{name}{Fore.BLUE}'...{Style.RESET_ALL}")
     result = search_person(name)
     if not result:
@@ -201,11 +201,12 @@ def create_voice_from_person(name: str, speed: float = 1.0) -> str:
     wav_files = download_clips(urls, output_dir)
     print(f"{Fore.GREEN}✓{Style.RESET_ALL} Downloaded {Fore.YELLOW}{len(wav_files)}{Style.RESET_ALL} clips")
 
-    # select best clips and clean them (40 seconds of best quality audio)
+    # select best clips and clean them (300 seconds of best quality audio)
     from src.audio_quality import prepare_reference_audio
     reference_path = output_dir / "reference_clean.wav"
-    print(f"\n{Fore.BLUE}🎵 Preparing clean reference audio{Style.RESET_ALL} {Style.DIM}(selecting best 40s, removing noise)...{Style.RESET_ALL}")
-    prepare_reference_audio(output_dir, reference_path, max_duration=40.0)
+    quality_note = f", {quality} mode" if quality != "default" else ""
+    print(f"\n{Fore.BLUE}🎵 Preparing clean reference audio{Style.RESET_ALL} {Style.DIM}(selecting best 300s{quality_note})...{Style.RESET_ALL}")
+    prepare_reference_audio(output_dir, reference_path, max_duration=300.0, quality=quality)
 
     # transcribe the reference audio for voice cloning
     print(f"\n{Fore.BLUE}📝 Transcribing reference audio with Whisper...{Style.RESET_ALL}")
@@ -239,10 +240,23 @@ def create_voice_from_person(name: str, speed: float = 1.0) -> str:
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2:
-        print(f"{Fore.YELLOW}Usage:{Style.RESET_ALL} python -m src.voice_scraper {Fore.CYAN}<person_name>{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}Usage:{Style.RESET_ALL} python -m src.voice_scraper {Fore.CYAN}<person_name>{Style.RESET_ALL} [--hq|--fast]")
+        print(f"  {Style.DIM}Default: Ultra quality (nfe=256, slowest but best){Style.RESET_ALL}")
+        print(f"  {Style.DIM}--hq: High quality (nfe=128, faster){Style.RESET_ALL}")
+        print(f"  {Style.DIM}--fast: Fast mode (nfe=64, fastest){Style.RESET_ALL}")
         sys.exit(1)
 
-    name = " ".join(sys.argv[1:])
-    voice_name = create_voice_from_person(name)
+    # parse quality flag (default is ultra)
+    quality = "ultra"
+    args = sys.argv[1:]
+    if "--fast" in args:
+        quality = "default"
+        args.remove("--fast")
+    elif "--hq" in args:
+        quality = "hq"
+        args.remove("--hq")
+
+    name = " ".join(args)
+    voice_name = create_voice_from_person(name, quality=quality)
     print(f"\n{Fore.GREEN}{Style.BRIGHT}🎉 Voice '{voice_name}' is ready!{Style.RESET_ALL}")
     print(f"{Fore.WHITE}Use with:{Style.RESET_ALL} {Fore.CYAN}./run tts input.txt -v {voice_name}{Style.RESET_ALL}\n")

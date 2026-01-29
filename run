@@ -104,6 +104,10 @@ def command_list_voices(_: argparse.Namespace) -> int:
 def command_scrape_voice(args: argparse.Namespace) -> int:
     _ensure_venv()
     cmd = [str(VENV_PYTHON), "-m", "src.voice_scraper", args.name]
+    if args.quality == "hq":
+        cmd.append("--hq")
+    elif args.quality == "ultra":
+        cmd.append("--ultra")
     return _run_venv(cmd, env={"PYTHONPATH": str(PROJECT_ROOT)})
 
 
@@ -239,6 +243,10 @@ def main(argv: list[str]) -> int:
 
     p_scrape = sub.add_parser("scrape-voice", help="Scrape voice samples from moviesoundclips.net")
     p_scrape.add_argument("name", help="Person name to search for (e.g., 'Nathan Fillion')")
+    p_scrape.add_argument("--hq", dest="quality", action="store_const", const="hq", default="ultra",
+                          help="High quality enhancement (faster than ultra)")
+    p_scrape.add_argument("--fast", dest="quality", action="store_const", const="default",
+                          help="Fast enhancement (lowest quality)")
     p_scrape.set_defaults(func=command_scrape_voice)
 
     p_clone = sub.add_parser("clone-voice", help="Create a cloned voice from an audio file")

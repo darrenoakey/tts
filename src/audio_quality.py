@@ -150,7 +150,15 @@ def reduce_noise_basic(input_path: Path, output_path: Path, sr_target: int = 240
 ENHANCE_TOOL = Path.home() / "src" / "audio-enhance" / "run"
 
 
-def enhance_audio(input_path: Path, output_path: Path, sr_target: int = 24000) -> Path:
+def enhance_audio(input_path: Path, output_path: Path, sr_target: int = 24000, quality: str = "default") -> Path:
+    """Enhance audio using resemble-enhance.
+
+    Args:
+        input_path: Input audio file
+        output_path: Output audio file
+        sr_target: Target sample rate (default 24000)
+        quality: Quality mode - "default", "hq" (nfe=128), or "ultra" (nfe=256)
+    """
     if not ENHANCE_TOOL.exists():
         raise RuntimeError(f"Enhancement tool not found: {ENHANCE_TOOL}")
 
@@ -160,6 +168,10 @@ def enhance_audio(input_path: Path, output_path: Path, sr_target: int = 24000) -
 
     # run resemble-enhance (does both denoising and enhancement)
     cmd = [str(ENHANCE_TOOL), "enhance", str(input_path), str(tmp_enhanced)]
+    if quality == "hq":
+        cmd.append("--hq")
+    elif quality == "ultra":
+        cmd.append("--ultra")
     result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:
@@ -188,8 +200,8 @@ def enhance_audio(input_path: Path, output_path: Path, sr_target: int = 24000) -
 # select highest quality clips up to max duration
 def select_best_clips(clip_dir: Path, max_duration: float = 15.0) -> list[dict]:
     clips = list(clip_dir.glob("clip_*.wav"))
-    # exclude already processed clips
-    clips = [c for c in clips if "_24k" not in c.name and "_clean" not in c.name]
+    # exclude already processed clips (only analyze original clips)
+    clips = [c for c in clips if "_24k" not in c.name and "_clean" not in c.name and "_enhanced" not in c.name]
 
     if not clips:
         return []
@@ -225,7 +237,8 @@ def select_best_clips(clip_dir: Path, max_duration: float = 15.0) -> list[dict]:
 def prepare_reference_audio(
     clip_dir: Path,
     output_path: Path,
-    max_duration: float = 15.0
+    max_duration: float = 15.0,
+    quality: str = "ultra"
 ) -> tuple[Path, list[dict]]:
     # select best clips
     selected = select_best_clips(clip_dir, max_duration)
@@ -239,13 +252,18 @@ def prepare_reference_audio(
         print(f"  {Fore.WHITE}•{Style.RESET_ALL} {Fore.CYAN}{c['path'].name}{Style.RESET_ALL}: {c['duration']:.1f}s, {Style.DIM}SNR={c['snr']:.1f}dB, quality={c['quality_score']:.1f}{Style.RESET_ALL}")
 
     # enhance each selected clip with AI (resemble-enhance does denoising + enhancement)
-    print(f"\n{Fore.MAGENTA}🤖 Enhancing clips with AI{Style.RESET_ALL} {Style.DIM}(this may take a few minutes per clip)...{Style.RESET_ALL}")
+    # skip clips that are already enhanced (idempotent)
+    quality_label = {"default": "", "hq": " (HQ mode)", "ultra": " (ULTRA mode)"}
+    print(f"\n{Fore.MAGENTA}🤖 Enhancing clips with AI{quality_label.get(quality, '')}{Style.RESET_ALL} {Style.DIM}(this may take a few minutes per clip)...{Style.RESET_ALL}")
     clean_paths = []
     for i, c in enumerate(selected):
         clean_path = c["path"].parent / f"{c['path'].stem}_enhanced.wav"
-        print(f"  {Fore.BLUE}[{i+1}/{len(selected)}]{Style.RESET_ALL} Enhancing {Fore.CYAN}{c['path'].name}{Style.RESET_ALL} ({c['duration']:.1f}s)...")
-        enhance_audio(c["path"], clean_path)
-        print(f"  {Fore.GREEN}✓{Style.RESET_ALL} Enhanced {Fore.CYAN}{clean_path.name}{Style.RESET_ALL}")
+        if clean_path.exists():
+            print(f"  {Fore.YELLOW}[{i+1}/{len(selected)}]{Style.RESET_ALL} {Style.DIM}Already enhanced:{Style.RESET_ALL} {Fore.CYAN}{clean_path.name}{Style.RESET_ALL}")
+        else:
+            print(f"  {Fore.BLUE}[{i+1}/{len(selected)}]{Style.RESET_ALL} Enhancing {Fore.CYAN}{c['path'].name}{Style.RESET_ALL} ({c['duration']:.1f}s)...")
+            enhance_audio(c["path"], clean_path, quality=quality)
+            print(f"  {Fore.GREEN}✓{Style.RESET_ALL} Enhanced {Fore.CYAN}{clean_path.name}{Style.RESET_ALL}")
         clean_paths.append(clean_path)
 
     # concatenate clean clips
@@ -281,13 +299,15 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
-        print(f"{Fore.YELLOW}Usage:{Style.RESET_ALL} python -m src.audio_quality {Fore.CYAN}<clip_dir>{Style.RESET_ALL} [max_duration]")
+        print(f"{Fore.YELLOW}Usage:{Style.RESET_ALL} python -m src.audio_quality {Fore.CYAN}<clip_dir>{Style.RESET_ALL} [max_duration] [quality]")
         print(f"  {Style.DIM}Analyzes clips in directory and prepares cleaned reference audio{Style.RESET_ALL}")
+        print(f"  {Style.DIM}quality: default, hq, or ultra{Style.RESET_ALL}")
         sys.exit(1)
 
     clip_dir = Path(sys.argv[1])
     max_duration = float(sys.argv[2]) if len(sys.argv) > 2 else 15.0
+    quality = sys.argv[3] if len(sys.argv) > 3 else "ultra"
 
     output_path = clip_dir / "reference_clean.wav"
-    prepare_reference_audio(clip_dir, output_path, max_duration)
+    prepare_reference_audio(clip_dir, output_path, max_duration, quality=quality)
     print(f"\n{Fore.GREEN}✓{Style.RESET_ALL} Reference audio ready: {Fore.CYAN}{output_path}{Style.RESET_ALL}")

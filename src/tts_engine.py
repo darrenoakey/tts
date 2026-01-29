@@ -106,13 +106,13 @@ def convert_wav_to_mp3(wav_path: Path, mp3_path: Path, normalize: bool = True, s
         cmd = [
             "ffmpeg", "-y", "-i", str(wav_path),
             "-af", filter_str,
-            "-codec:a", "libmp3lame", "-qscale:a", "2",
+            "-codec:a", "libmp3lame", "-qscale:a", "0",
             str(mp3_path)
         ]
     else:
         cmd = [
             "ffmpeg", "-y", "-i", str(wav_path),
-            "-codec:a", "libmp3lame", "-qscale:a", "2",
+            "-codec:a", "libmp3lame", "-qscale:a", "0",
             str(mp3_path)
         ]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -130,11 +130,15 @@ def convert_wav_to_mp3(wav_path: Path, mp3_path: Path, normalize: bool = True, s
 ENHANCE_TOOL = Path.home() / "src" / "audio-enhance" / "run"
 
 
-def enhance_output(input_path: Path, output_path: Path) -> Path:
+def enhance_output(input_path: Path, output_path: Path, quality: str = "ultra") -> Path:
     if not ENHANCE_TOOL.exists():
         raise RuntimeError(f"Enhancement tool not found: {ENHANCE_TOOL}")
 
     cmd = [str(ENHANCE_TOOL), "enhance", str(input_path), str(output_path)]
+    if quality == "hq":
+        cmd.append("--hq")
+    elif quality == "ultra":
+        cmd.append("--ultra")
     result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:
