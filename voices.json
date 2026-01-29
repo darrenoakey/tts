@@ -20,5 +20,9 @@
     "ref_audio": "/Volumes/T9/darrenoakey/Downloads/voice script sample.wav",
     "ref_text": "A birch canoe slid smoothly on the calm lake surface. A thick fog crept over the jagged mountain peaks at dawn. She held the heavy bronze jar with both hands, feeling its cool weight. The quick brown fox jumped lazily over the sleeping dog. Please call Stella and ask her about the weekly meeting schedule. The views from that church tower were breathtaking on a clear Thursday evening. A large size in stockings is hard to sell, but the right pitch makes all the difference. The boy was there when the sun rose brightly over the eastern hills. We will go to the zone where fresh water mixes with the salty ocean. Young children should avoid taking those strong medicines without guidance.",
     "speed": 1.0
+  },
+  "gary": {
+    "description": "A refined British male newsreader in his 40s with an impeccably controlled, authoritative voice. His pronunciation is crystal clear with perfect received pronunciation (RP) accent. Every syllable is precisely articulated with measured pacing. His tone is calm, confident, and professional - the epitome of BBC World Service broadcasting. Crisp consonants, neutral pitch, no vocal fry or uptalk. Speaks with gravitas and clarity.",
+    "speed": 1.0
   }
 }
