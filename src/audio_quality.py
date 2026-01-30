@@ -19,13 +19,13 @@ init(autoreset=True)
 def estimate_snr(audio: np.ndarray, sr: int) -> float:
     # simple energy-based VAD
     frame_size = int(sr * 0.025)  # 25ms frames
-    hop_size = int(sr * 0.010)    # 10ms hop
+    hop_size = int(sr * 0.010)  # 10ms hop
 
     # compute frame energies
     energies = []
     for i in range(0, len(audio) - frame_size, hop_size):
-        frame = audio[i:i + frame_size]
-        energy = np.sum(frame ** 2) / frame_size
+        frame = audio[i : i + frame_size]
+        energy = np.sum(frame**2) / frame_size
         energies.append(energy)
 
     if not energies:
@@ -62,8 +62,8 @@ def estimate_speech_ratio(audio: np.ndarray, sr: int) -> float:
 
     energies = []
     for i in range(0, len(audio) - frame_size, hop_size):
-        frame = audio[i:i + frame_size]
-        energy = np.sum(frame ** 2) / frame_size
+        frame = audio[i : i + frame_size]
+        energy = np.sum(frame**2) / frame_size
         energies.append(energy)
 
     if not energies:
@@ -130,10 +130,15 @@ def reduce_noise_basic(input_path: Path, output_path: Path, sr_target: int = 240
     # resample to target sample rate
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
-        "ffmpeg", "-y", "-i", str(tmp_path),
-        "-ar", str(sr_target),
-        "-ac", "1",  # mono
-        str(output_path)
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(tmp_path),
+        "-ar",
+        str(sr_target),
+        "-ac",
+        "1",  # mono
+        str(output_path),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     tmp_path.unlink()
@@ -181,10 +186,15 @@ def enhance_audio(input_path: Path, output_path: Path, sr_target: int = 24000, q
     # resample to target sample rate
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
-        "ffmpeg", "-y", "-i", str(tmp_enhanced),
-        "-ar", str(sr_target),
-        "-ac", "1",  # mono
-        str(output_path)
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(tmp_enhanced),
+        "-ar",
+        str(sr_target),
+        "-ac",
+        "1",  # mono
+        str(output_path),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     tmp_enhanced.unlink()
@@ -235,10 +245,7 @@ def select_best_clips(clip_dir: Path, max_duration: float = 15.0) -> list[dict]:
 # prepare reference audio
 # select best clips, clean them, concatenate into reference audio
 def prepare_reference_audio(
-    clip_dir: Path,
-    output_path: Path,
-    max_duration: float = 15.0,
-    quality: str = "ultra"
+    clip_dir: Path, output_path: Path, max_duration: float = 15.0, quality: str = "ultra"
 ) -> tuple[Path, list[dict]]:
     # select best clips
     selected = select_best_clips(clip_dir, max_duration)
@@ -246,22 +253,32 @@ def prepare_reference_audio(
     if not selected:
         raise ValueError("No clips found")
 
-    total_duration = sum(c['duration'] for c in selected)
-    print(f"\n{Fore.GREEN}✓{Style.RESET_ALL} Selected {Fore.YELLOW}{len(selected)}{Style.RESET_ALL} clips ({Fore.CYAN}{total_duration:.1f}s{Style.RESET_ALL} total):")
+    total_duration = sum(c["duration"] for c in selected)
+    print(
+        f"\n{Fore.GREEN}✓{Style.RESET_ALL} Selected {Fore.YELLOW}{len(selected)}{Style.RESET_ALL} clips ({Fore.CYAN}{total_duration:.1f}s{Style.RESET_ALL} total):"
+    )
     for c in selected:
-        print(f"  {Fore.WHITE}•{Style.RESET_ALL} {Fore.CYAN}{c['path'].name}{Style.RESET_ALL}: {c['duration']:.1f}s, {Style.DIM}SNR={c['snr']:.1f}dB, quality={c['quality_score']:.1f}{Style.RESET_ALL}")
+        print(
+            f"  {Fore.WHITE}•{Style.RESET_ALL} {Fore.CYAN}{c['path'].name}{Style.RESET_ALL}: {c['duration']:.1f}s, {Style.DIM}SNR={c['snr']:.1f}dB, quality={c['quality_score']:.1f}{Style.RESET_ALL}"
+        )
 
     # enhance each selected clip with AI (resemble-enhance does denoising + enhancement)
     # skip clips that are already enhanced (idempotent)
     quality_label = {"default": "", "hq": " (HQ mode)", "ultra": " (ULTRA mode)"}
-    print(f"\n{Fore.MAGENTA}🤖 Enhancing clips with AI{quality_label.get(quality, '')}{Style.RESET_ALL} {Style.DIM}(this may take a few minutes per clip)...{Style.RESET_ALL}")
+    print(
+        f"\n{Fore.MAGENTA}🤖 Enhancing clips with AI{quality_label.get(quality, '')}{Style.RESET_ALL} {Style.DIM}(this may take a few minutes per clip)...{Style.RESET_ALL}"
+    )
     clean_paths = []
     for i, c in enumerate(selected):
         clean_path = c["path"].parent / f"{c['path'].stem}_enhanced.wav"
         if clean_path.exists():
-            print(f"  {Fore.YELLOW}[{i+1}/{len(selected)}]{Style.RESET_ALL} {Style.DIM}Already enhanced:{Style.RESET_ALL} {Fore.CYAN}{clean_path.name}{Style.RESET_ALL}")
+            print(
+                f"  {Fore.YELLOW}[{i + 1}/{len(selected)}]{Style.RESET_ALL} {Style.DIM}Already enhanced:{Style.RESET_ALL} {Fore.CYAN}{clean_path.name}{Style.RESET_ALL}"
+            )
         else:
-            print(f"  {Fore.BLUE}[{i+1}/{len(selected)}]{Style.RESET_ALL} Enhancing {Fore.CYAN}{c['path'].name}{Style.RESET_ALL} ({c['duration']:.1f}s)...")
+            print(
+                f"  {Fore.BLUE}[{i + 1}/{len(selected)}]{Style.RESET_ALL} Enhancing {Fore.CYAN}{c['path'].name}{Style.RESET_ALL} ({c['duration']:.1f}s)..."
+            )
             enhance_audio(c["path"], clean_path, quality=quality)
             print(f"  {Fore.GREEN}✓{Style.RESET_ALL} Enhanced {Fore.CYAN}{clean_path.name}{Style.RESET_ALL}")
         clean_paths.append(clean_path)
@@ -270,20 +287,16 @@ def prepare_reference_audio(
     print(f"\n{Fore.BLUE}🔗 Concatenating to {Fore.CYAN}{output_path.name}{Fore.BLUE}...{Style.RESET_ALL}")
     if len(clean_paths) == 1:
         import shutil
+
         shutil.copy(clean_paths[0], output_path)
     else:
         # use ffmpeg concat
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             concat_list = Path(f.name)
             for p in clean_paths:
                 f.write(f"file '{p}'\n")
 
-        cmd = [
-            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-            "-i", str(concat_list),
-            "-c", "copy",
-            str(output_path)
-        ]
+        cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list), "-c", "copy", str(output_path)]
         result = subprocess.run(cmd, capture_output=True, text=True)
         concat_list.unlink()
 
@@ -299,7 +312,9 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
-        print(f"{Fore.YELLOW}Usage:{Style.RESET_ALL} python -m src.audio_quality {Fore.CYAN}<clip_dir>{Style.RESET_ALL} [max_duration] [quality]")
+        print(
+            f"{Fore.YELLOW}Usage:{Style.RESET_ALL} python -m src.audio_quality {Fore.CYAN}<clip_dir>{Style.RESET_ALL} [max_duration] [quality]"
+        )
         print(f"  {Style.DIM}Analyzes clips in directory and prepares cleaned reference audio{Style.RESET_ALL}")
         print(f"  {Style.DIM}quality: default, hq, or ultra{Style.RESET_ALL}")
         sys.exit(1)

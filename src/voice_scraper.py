@@ -21,11 +21,13 @@ init(autoreset=True)
 # use mlx-whisper to transcribe audio file
 def transcribe_audio(audio_path: Path) -> str:
     import mlx_whisper
+
     result = mlx_whisper.transcribe(
         str(audio_path),
         path_or_hf_repo="mlx-community/whisper-large-v3-turbo",
     )
     return result["text"].strip()
+
 
 BASE_URL = "https://www.moviesoundclips.net"
 LOCAL_DIR = Path(__file__).parent.parent / "local" / "movie"
@@ -109,11 +111,15 @@ def download_clips(urls: list[str], output_dir: Path) -> list[Path]:
         output_path = output_dir / filename
 
         if output_path.exists():
-            print(f"  {Fore.YELLOW}[{i+1}/{len(urls)}]{Style.RESET_ALL} {Style.DIM}Already exists:{Style.RESET_ALL} {Fore.CYAN}{filename}{Style.RESET_ALL}")
+            print(
+                f"  {Fore.YELLOW}[{i + 1}/{len(urls)}]{Style.RESET_ALL} {Style.DIM}Already exists:{Style.RESET_ALL} {Fore.CYAN}{filename}{Style.RESET_ALL}"
+            )
             downloaded.append(output_path)
             continue
 
-        print(f"  {Fore.BLUE}[{i+1}/{len(urls)}]{Style.RESET_ALL} Downloading: {Fore.CYAN}{url.split('/')[-1]}{Style.RESET_ALL}")
+        print(
+            f"  {Fore.BLUE}[{i + 1}/{len(urls)}]{Style.RESET_ALL} Downloading: {Fore.CYAN}{url.split('/')[-1]}{Style.RESET_ALL}"
+        )
         try:
             response = requests.get(url, timeout=60)
             response.raise_for_status()
@@ -136,7 +142,7 @@ def concatenate_with_silence(wav_files: list[Path], output_path: Path, silence_m
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # create a concat file list with silence between clips
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         concat_list = Path(f.name)
         for i, wav_path in enumerate(wav_files):
             f.write(f"file '{wav_path}'\n")
@@ -154,11 +160,7 @@ def concatenate_with_silence(wav_files: list[Path], output_path: Path, silence_m
     concat_inputs = "".join(f"[a{i}]" for i in range(len(wav_files)))
     filter_str = ";".join(filter_parts) + f";{concat_inputs}concat=n={len(wav_files)}:v=0:a=1[out]"
 
-    cmd = ["ffmpeg", "-y"] + inputs + [
-        "-filter_complex", filter_str,
-        "-map", "[out]",
-        str(output_path)
-    ]
+    cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_str, "-map", "[out]", str(output_path)]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     concat_list.unlink()
@@ -179,7 +181,9 @@ def create_voice_from_person(name: str, speed: float = 1.0, quality: str = "ultr
         raise ValueError(f"Could not find '{name}' on moviesoundclips.net")
 
     person_id, full_name = result
-    print(f"{Fore.GREEN}✓{Style.RESET_ALL} Found: {Fore.CYAN}{Style.BRIGHT}{full_name}{Style.RESET_ALL} {Style.DIM}(id={person_id}){Style.RESET_ALL}")
+    print(
+        f"{Fore.GREEN}✓{Style.RESET_ALL} Found: {Fore.CYAN}{Style.BRIGHT}{full_name}{Style.RESET_ALL} {Style.DIM}(id={person_id}){Style.RESET_ALL}"
+    )
 
     # create voice name from full name
     voice_name = full_name.lower().replace(" ", "_").replace(".", "").replace("'", "")
@@ -203,9 +207,12 @@ def create_voice_from_person(name: str, speed: float = 1.0, quality: str = "ultr
 
     # select best clips and clean them (300 seconds of best quality audio)
     from src.audio_quality import prepare_reference_audio
+
     reference_path = output_dir / "reference_clean.wav"
     quality_note = f", {quality} mode" if quality != "default" else ""
-    print(f"\n{Fore.BLUE}🎵 Preparing clean reference audio{Style.RESET_ALL} {Style.DIM}(selecting best 300s{quality_note})...{Style.RESET_ALL}")
+    print(
+        f"\n{Fore.BLUE}🎵 Preparing clean reference audio{Style.RESET_ALL} {Style.DIM}(selecting best 300s{quality_note})...{Style.RESET_ALL}"
+    )
     prepare_reference_audio(output_dir, reference_path, max_duration=300.0, quality=quality)
 
     # transcribe the reference audio for voice cloning
@@ -225,6 +232,7 @@ def create_voice_from_person(name: str, speed: float = 1.0, quality: str = "ultr
 
     # save to voice registry
     import json
+
     registry = {}
     if VOICE_REGISTRY_PATH.exists():
         registry = json.loads(VOICE_REGISTRY_PATH.read_text())
@@ -239,8 +247,11 @@ def create_voice_from_person(name: str, speed: float = 1.0, quality: str = "ultr
 # main
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) < 2:
-        print(f"{Fore.YELLOW}Usage:{Style.RESET_ALL} python -m src.voice_scraper {Fore.CYAN}<person_name>{Style.RESET_ALL} [--hq|--fast]")
+        print(
+            f"{Fore.YELLOW}Usage:{Style.RESET_ALL} python -m src.voice_scraper {Fore.CYAN}<person_name>{Style.RESET_ALL} [--hq|--fast]"
+        )
         print(f"  {Style.DIM}Default: Ultra quality (nfe=256, slowest but best){Style.RESET_ALL}")
         print(f"  {Style.DIM}--hq: High quality (nfe=128, faster){Style.RESET_ALL}")
         print(f"  {Style.DIM}--fast: Fast mode (nfe=64, fastest){Style.RESET_ALL}")

@@ -50,7 +50,9 @@ def convert_text_to_speech(
         speed = custom_voice.get("speed", DEFAULT_SPEED) if custom_voice else DEFAULT_SPEED
 
     engine = get_engine(model, voice=voice, voice_description=voice_description)
-    return engine.synthesize(text, output_path, language=language, temperature=temperature, speed=speed, enhance=enhance)
+    return engine.synthesize(
+        text, output_path, language=language, temperature=temperature, speed=speed, enhance=enhance
+    )
 
 
 # ##################################################################
