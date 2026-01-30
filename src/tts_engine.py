@@ -227,13 +227,15 @@ def synthesize_chunk_subprocess(
     # we use python -c with a self-contained script
     script = f"""
 import sys
+import os
 import gc
 import warnings
 import logging
 
-# suppress warnings
+# suppress ALL warnings including asyncio event loop cleanup warnings
+warnings.filterwarnings('ignore')
 logging.getLogger('transformers').setLevel(logging.ERROR)
-warnings.filterwarnings('ignore', module='transformers')
+logging.getLogger('asyncio').setLevel(logging.CRITICAL)
 
 import numpy as np
 import soundfile as sf
@@ -311,10 +313,12 @@ try:
     gc.collect()
     mx.clear_cache()
 
-    sys.exit(0)
+    # use os._exit() to skip atexit handlers that cause event loop warnings
+    os._exit(0)
 except Exception as e:
     print(f"Chunk synthesis failed: {{e}}", file=sys.stderr)
-    sys.exit(1)
+    sys.stderr.flush()
+    os._exit(1)
 """
 
     # run in subprocess with isolated memory
