@@ -23,8 +23,11 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 
 - **MLX backend**: Uses mlx-audio for efficient Apple Silicon inference
 - **Chunked processing**: Long texts split into ~3 sentence chunks to prevent memory spikes
-- **Subprocess isolation**: Each chunk runs in a completely isolated subprocess - model loads, generates, and exits. This guarantees memory is fully released between chunks and prevents accumulation that could crash the system
-- **Memory safety checks**: Before each chunk, available system memory is checked. If below 4GB threshold, synthesis aborts with a clear error instead of crashing the machine
+- **Subprocess isolation**: Model runs in isolated subprocess, exits cleanly when done
+  - QwenTtsEngine/VoiceCloneEngine: ONE subprocess for ALL chunks (avoids asyncio SIGCHLD conflicts with autoblog)
+  - VoiceDesignEngine: one subprocess per chunk (supports resumability via work_dir)
+- **Memory monitoring**: Subprocess tracks RSS via `resource.getrusage()`. If exceeds 10GB, exits with code 77 and parent restarts from next chunk
+- **Memory safety checks**: Before starting, available system memory is checked. If below 1.5GB threshold, synthesis aborts with clear error
 - **File locking**: Only one TTS instance runs at a time (uses `.tts.lock`)
 
 ## Voices
@@ -92,4 +95,5 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 - **NEVER run multiple models in parallel** - causes GPU crashes (Metal command buffer errors). Always run one model at a time, sequentially
 - **design-voice is resumable** - if it crashes, just run again and it will skip completed chunks
 - **design-voice auto-retries** - on GPU crash, will automatically retry up to 10 times
-- **Subprocess per chunk** - each chunk spawns a new Python process (model load + generate + exit). This adds ~10-20s overhead per chunk but guarantees memory isolation
+- **Memory auto-restart** - if subprocess exceeds 10GB RSS, it exits with code 77 and parent restarts from next chunk (up to 50 restarts)
+- **asyncio compatibility** - single subprocess for all chunks avoids SIGCHLD signal conflicts when called from asyncio apps (like autoblog)
