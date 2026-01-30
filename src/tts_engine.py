@@ -203,13 +203,21 @@ def check_memory_safe(operation: str = "operation") -> None:
         )
 
 
+# memory limit for subprocess restart (10GB)
+SUBPROCESS_MEMORY_LIMIT_GB = 10.0
+# exit code meaning "memory limit exceeded, need restart"
+EXIT_CODE_MEMORY_RESTART = 77
+
+
 # ##################################################################
-# subprocess chunk synthesis
-# runs a single chunk in a completely isolated subprocess to guarantee memory cleanup
-def synthesize_chunk_subprocess(
+# subprocess synthesis
+# runs chunks in ONE subprocess to avoid asyncio SIGCHLD conflicts
+# model loads once, gc.collect() between chunks for memory management
+# if memory exceeds 10GB, exits with code 77 to signal restart needed
+def _synthesize_subprocess(
     engine_type: str,
-    chunk_text: str,
-    output_wav: str,
+    chunks: list[str],
+    output_wavs: list[str],
     language: str = "English",
     temperature: float = 0.9,
     voice: str | None = None,
@@ -217,20 +225,28 @@ def synthesize_chunk_subprocess(
     ref_audio: str | None = None,
     ref_text: str | None = None,
     model_name: str | None = None,
-) -> int:
+    start_index: int = 0,
+) -> tuple[int, int]:
     """
-    Synthesize a single chunk in a subprocess for memory isolation.
+    Internal: Synthesize chunks in ONE subprocess for memory isolation.
+    Model loads once, processes chunks with gc between them.
+    If memory exceeds 10GB, exits early with code 77.
 
-    Returns exit code (0 = success).
+    Returns (exit_code, last_completed_index).
+    Exit code 0 = all done, 77 = memory restart needed, 1 = error.
     """
-    # build the command to run a single chunk
-    # we use python -c with a self-contained script
+    import json
+    chunks_json = json.dumps(chunks)
+    output_wavs_json = json.dumps(output_wavs)
+
     script = f"""
 import sys
 import os
 import gc
+import json
 import warnings
 import logging
+import resource
 
 # suppress ALL warnings including asyncio event loop cleanup warnings
 warnings.filterwarnings('ignore')
@@ -242,9 +258,15 @@ import soundfile as sf
 import mlx.core as mx
 from mlx_audio.tts.utils import load_model
 
+def get_memory_gb():
+    \"\"\"Get current process memory usage in GB.\"\"\"
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 ** 3)
+
+MEMORY_LIMIT_GB = {SUBPROCESS_MEMORY_LIMIT_GB}
 engine_type = {repr(engine_type)}
-chunk_text = {repr(chunk_text)}
-output_wav = {repr(output_wav)}
+chunks = json.loads({repr(chunks_json)})
+output_wavs = json.loads({repr(output_wavs_json)})
+start_index = {start_index}
 language = {repr(language)}
 temperature = {temperature}
 voice = {repr(voice)}
@@ -254,69 +276,100 @@ ref_text = {repr(ref_text)}
 model_name = {repr(model_name)}
 
 try:
+    # load model ONCE
     if engine_type == "custom":
         model = load_model(model_name or "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16")
-        results = list(model.generate_custom_voice(
-            text=chunk_text,
-            language=language,
-            speaker=voice,
-            temperature=temperature,
-        ))
     elif engine_type == "design":
         model = load_model(model_name or "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16")
-        results = list(model.generate_voice_design(
-            text=chunk_text,
-            language=language,
-            instruct=voice_description,
-            temperature=temperature,
-        ))
     elif engine_type == "clone":
         model = load_model(model_name or "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16")
-        # load reference audio
+        # load reference audio once
         ref_data, sr = sf.read(ref_audio)
         if len(ref_data.shape) > 1:
             ref_data = np.mean(ref_data, axis=1)
         if sr != model.sample_rate:
             import tempfile
-            import subprocess
+            import subprocess as sp
             from pathlib import Path
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                 resampled_path = Path(tmp.name)
-            subprocess.run(["ffmpeg", "-y", "-i", ref_audio, "-ar", str(model.sample_rate), "-ac", "1", str(resampled_path)],
-                          capture_output=True, check=True)
+            sp.run(["ffmpeg", "-y", "-i", ref_audio, "-ar", str(model.sample_rate), "-ac", "1", str(resampled_path)],
+                   capture_output=True, check=True)
             ref_data, _ = sf.read(resampled_path)
             resampled_path.unlink()
         ref_audio_array = mx.array(ref_data.astype(np.float32))
-        results = list(model.generate(
-            text=chunk_text,
-            ref_audio=ref_audio_array,
-            ref_text=ref_text,
-            lang_code=language.lower()[:2],
-            temperature=temperature,
-        ))
     else:
         raise ValueError(f"Unknown engine type: {{engine_type}}")
 
-    if not results:
-        raise RuntimeError("No audio generated")
+    # process chunks starting from start_index
+    total = len(chunks)
+    last_completed = start_index - 1
+    for i in range(start_index, total):
+        chunk_text = chunks[i]
+        output_wav = output_wavs[i]
 
-    audio = results[0].audio
-    if hasattr(audio, 'tolist'):
-        audio_np = np.array(audio.tolist(), dtype=np.float32)
-    else:
-        audio_np = np.array(audio, dtype=np.float32)
+        print(f"Processing chunk {{i+1}}/{{total}}...", flush=True)
 
-    sf.write(output_wav, audio_np, model.sample_rate)
+        if engine_type == "custom":
+            results = list(model.generate_custom_voice(
+                text=chunk_text,
+                language=language,
+                speaker=voice,
+                temperature=temperature,
+            ))
+        elif engine_type == "design":
+            results = list(model.generate_voice_design(
+                text=chunk_text,
+                language=language,
+                instruct=voice_description,
+                temperature=temperature,
+            ))
+        elif engine_type == "clone":
+            results = list(model.generate(
+                text=chunk_text,
+                ref_audio=ref_audio_array,
+                ref_text=ref_text,
+                lang_code=language.lower()[:2],
+                temperature=temperature,
+            ))
 
-    # explicit cleanup
-    del results, audio, audio_np, model
+        if not results:
+            raise RuntimeError(f"No audio generated for chunk {{i+1}}")
+
+        audio = results[0].audio
+        if hasattr(audio, 'tolist'):
+            audio_np = np.array(audio.tolist(), dtype=np.float32)
+        else:
+            audio_np = np.array(audio, dtype=np.float32)
+
+        sf.write(output_wav, audio_np, model.sample_rate)
+        last_completed = i
+        print(f"Chunk {{i+1}}/{{total}} complete", flush=True)
+
+        # cleanup between chunks
+        del results, audio, audio_np
+        gc.collect()
+        mx.clear_cache()
+
+        # check memory - if too high, exit for restart
+        mem_gb = get_memory_gb()
+        if mem_gb > MEMORY_LIMIT_GB:
+            print(f"Memory limit exceeded ({{mem_gb:.1f}}GB > {{MEMORY_LIMIT_GB}}GB), restarting...", flush=True)
+            # write last completed index to stdout for parent to read
+            print(f"LAST_COMPLETED:{{last_completed}}", flush=True)
+            del model
+            gc.collect()
+            mx.clear_cache()
+            os._exit({EXIT_CODE_MEMORY_RESTART})
+
+    # final cleanup
+    del model
     gc.collect()
     mx.clear_cache()
-
-    # use os._exit() to skip atexit handlers that cause event loop warnings
+    print(f"LAST_COMPLETED:{{last_completed}}", flush=True)
     os._exit(0)
 except Exception as e:
-    print(f"Chunk synthesis failed: {{e}}", file=sys.stderr)
+    print(f"Synthesis failed: {{e}}", file=sys.stderr)
     sys.stderr.flush()
     os._exit(1)
 """
@@ -329,10 +382,71 @@ except Exception as e:
         env={**os.environ, "PYTHONPATH": str(Path(__file__).parent.parent)},
     )
 
-    if result.returncode != 0:
+    # print stdout (progress messages)
+    if result.stdout:
+        for line in result.stdout.strip().split('\n'):
+            if not line.startswith("LAST_COMPLETED:"):
+                print(line)
+
+    # parse last completed index from output
+    last_completed = start_index - 1
+    if result.stdout:
+        for line in result.stdout.strip().split('\n'):
+            if line.startswith("LAST_COMPLETED:"):
+                last_completed = int(line.split(':')[1])
+
+    if result.returncode != 0 and result.returncode != EXIT_CODE_MEMORY_RESTART:
         print(f"Subprocess stderr: {result.stderr}", file=sys.stderr)
 
-    return result.returncode
+    return result.returncode, last_completed
+
+
+def synthesize_with_restart(
+    engine_type: str,
+    chunks: list[str],
+    output_wavs: list[str],
+    language: str = "English",
+    temperature: float = 0.9,
+    voice: str | None = None,
+    voice_description: str | None = None,
+    ref_audio: str | None = None,
+    ref_text: str | None = None,
+    model_name: str | None = None,
+) -> int:
+    """
+    Synthesize all chunks, restarting subprocess if memory limit exceeded.
+    Returns 0 on success, 1 on error.
+    """
+    start_index = 0
+    max_restarts = 50  # safety limit
+
+    for _ in range(max_restarts):
+        rc, last_completed = _synthesize_subprocess(
+            engine_type=engine_type,
+            chunks=chunks,
+            output_wavs=output_wavs,
+            language=language,
+            temperature=temperature,
+            voice=voice,
+            voice_description=voice_description,
+            ref_audio=ref_audio,
+            ref_text=ref_text,
+            model_name=model_name,
+            start_index=start_index,
+        )
+
+        if rc == 0:
+            return 0  # success
+        elif rc == EXIT_CODE_MEMORY_RESTART:
+            start_index = last_completed + 1
+            if start_index >= len(chunks):
+                return 0  # all done
+            print(f"Restarting subprocess from chunk {start_index + 1}/{len(chunks)}...")
+        else:
+            return rc  # error
+
+    print(f"Max restarts ({max_restarts}) exceeded", file=sys.stderr)
+    return 1
 
 
 def concatenate_wav_files(wav_paths: list[Path], output_path: Path) -> Path:
@@ -417,54 +531,51 @@ class QwenTtsEngine(TtsEngine):
         # ##################################################################
         # synthesize
         # generate speech from text using qwen model and save as mp3
-        # each chunk processed in ISOLATED SUBPROCESS to prevent memory accumulation
-        # if enhance=True, apply AI enhancement to clean up the output
+        # ALL chunks processed in ONE subprocess to prevent asyncio SIGCHLD conflicts
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # check memory before starting
+        check_memory_safe("custom voice synthesis")
+
         # split text into chunks for memory-efficient processing
         chunks = split_into_chunks(text)
+
+        # create temp files for each chunk
         chunk_wavs: list[Path] = []
+        for i in range(len(chunks)):
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                chunk_wavs.append(Path(tmp.name))
 
         try:
-            for i, chunk in enumerate(chunks):
-                # check memory before starting each chunk
-                check_memory_safe(f"chunk {i + 1}/{len(chunks)}")
+            # synthesize ALL chunks in ONE subprocess
+            rc = synthesize_with_restart(
+                engine_type="custom",
+                chunks=chunks,
+                output_wavs=[str(p) for p in chunk_wavs],
+                language=language,
+                temperature=temperature,
+                voice=self.voice,
+                model_name=self.model_name,
+            )
 
-                print(f"Processing chunk {i + 1}/{len(chunks)} (subprocess isolation)...")
+            if rc != 0:
+                raise RuntimeError(f"Synthesis subprocess failed (exit code {rc})")
 
-                # create temp file for this chunk's output
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                    chunk_wav = Path(tmp.name)
-
-                # synthesize in isolated subprocess - model loads and unloads completely
-                rc = synthesize_chunk_subprocess(
-                    engine_type="custom",
-                    chunk_text=chunk,
-                    output_wav=str(chunk_wav),
-                    language=language,
-                    temperature=temperature,
-                    voice=self.voice,
-                    model_name=self.model_name,
-                )
-
-                if rc != 0:
-                    raise RuntimeError(f"Subprocess failed for chunk {i + 1} (exit code {rc})")
-
+            # verify all chunks were created
+            for i, chunk_wav in enumerate(chunk_wavs):
                 if not chunk_wav.exists() or chunk_wav.stat().st_size < 100:
                     raise RuntimeError(f"No audio generated for chunk {i + 1}")
 
-                # enhance each chunk individually (faster than enhancing combined file)
-                if enhance:
+            # enhance each chunk if requested
+            if enhance:
+                for i, chunk_wav in enumerate(chunk_wavs):
                     print(f"Enhancing chunk {i + 1}/{len(chunks)}...")
                     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                         enhanced_chunk = Path(tmp.name)
                     enhance_output(chunk_wav, enhanced_chunk)
                     chunk_wav.unlink()
-                    chunk_wav = enhanced_chunk
-
-                chunk_wavs.append(chunk_wav)
-                print(f"Chunk {i + 1}/{len(chunks)} complete")
+                    chunk_wavs[i] = enhanced_chunk
 
             # concatenate all chunk wavs into final output
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
@@ -582,10 +693,11 @@ class VoiceDesignEngine(TtsEngine):
                 print(f"[Generator] Starting chunk {i + 1}/{total_chunks} (subprocess)...")
 
                 # synthesize in isolated subprocess - model loads and unloads completely
-                rc = synthesize_chunk_subprocess(
+                # use single-chunk list for resumability (each chunk is independent)
+                rc = synthesize_with_restart(
                     engine_type="design",
-                    chunk_text=chunk,
-                    output_wav=str(raw_path),
+                    chunks=[chunk],
+                    output_wavs=[str(raw_path)],
                     language=language,
                     temperature=temperature,
                     voice_description=self.voice_description,
@@ -736,54 +848,52 @@ class VoiceCloneEngine(TtsEngine):
         # ##################################################################
         # synthesize
         # generate speech from text using voice cloning
-        # each chunk processed in ISOLATED SUBPROCESS to prevent memory accumulation
+        # ALL chunks processed in ONE subprocess to prevent asyncio SIGCHLD conflicts
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # check memory before starting
+        check_memory_safe("voice cloning synthesis")
+
         # split text into chunks for memory-efficient processing
         chunks = split_into_chunks(text)
+
+        # create temp files for each chunk
         chunk_wavs: list[Path] = []
+        for i in range(len(chunks)):
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                chunk_wavs.append(Path(tmp.name))
 
         try:
-            for i, chunk in enumerate(chunks):
-                # check memory before starting each chunk
-                check_memory_safe(f"chunk {i + 1}/{len(chunks)}")
+            # synthesize ALL chunks in ONE subprocess
+            rc = synthesize_with_restart(
+                engine_type="clone",
+                chunks=chunks,
+                output_wavs=[str(p) for p in chunk_wavs],
+                language=language,
+                temperature=temperature,
+                ref_audio=self.ref_audio,
+                ref_text=self.ref_text,
+                model_name=self.model_name,
+            )
 
-                print(f"Processing chunk {i + 1}/{len(chunks)} (subprocess isolation)...")
+            if rc != 0:
+                raise RuntimeError(f"Synthesis subprocess failed (exit code {rc})")
 
-                # create temp file for this chunk's output
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                    chunk_wav = Path(tmp.name)
-
-                # synthesize in isolated subprocess - model loads and unloads completely
-                rc = synthesize_chunk_subprocess(
-                    engine_type="clone",
-                    chunk_text=chunk,
-                    output_wav=str(chunk_wav),
-                    language=language,
-                    temperature=temperature,
-                    ref_audio=self.ref_audio,
-                    ref_text=self.ref_text,
-                    model_name=self.model_name,
-                )
-
-                if rc != 0:
-                    raise RuntimeError(f"Subprocess failed for chunk {i + 1} (exit code {rc})")
-
+            # verify all chunks were created
+            for i, chunk_wav in enumerate(chunk_wavs):
                 if not chunk_wav.exists() or chunk_wav.stat().st_size < 100:
                     raise RuntimeError(f"No audio generated for chunk {i + 1}")
 
-                # enhance each chunk individually (faster than enhancing combined file)
-                if enhance:
+            # enhance each chunk if requested
+            if enhance:
+                for i, chunk_wav in enumerate(chunk_wavs):
                     print(f"Enhancing chunk {i + 1}/{len(chunks)}...")
                     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                         enhanced_chunk = Path(tmp.name)
                     enhance_output(chunk_wav, enhanced_chunk)
                     chunk_wav.unlink()
-                    chunk_wav = enhanced_chunk
-
-                chunk_wavs.append(chunk_wav)
-                print(f"Chunk {i + 1}/{len(chunks)} complete")
+                    chunk_wavs[i] = enhanced_chunk
 
             # concatenate all chunk wavs into final output
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
