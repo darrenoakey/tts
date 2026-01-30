@@ -1,6 +1,7 @@
 import gc
 import json
 import logging
+import multiprocessing
 import re
 import subprocess
 import tempfile
@@ -147,6 +148,37 @@ def enhance_output(input_path: Path, output_path: Path, quality: str = "ultra") 
     return output_path
 
 
+# ##################################################################
+# enhancer worker process
+# runs in separate process, enhances chunks as they become available
+def _enhancer_worker(queue: multiprocessing.Queue, status: dict, quality: str = "ultra") -> None:
+    import time
+    while True:
+        item = queue.get()
+        if item is None:
+            # sentinel - done
+            break
+        chunk_idx, total_chunks, raw_path, enhanced_path = item
+        start_time = time.time()
+        status["current"] = chunk_idx
+        status["state"] = "enhancing"
+        print(f"[Enhancer] Starting chunk {chunk_idx}/{total_chunks}...")
+        try:
+            enhance_output(Path(raw_path), Path(enhanced_path), quality)
+            elapsed = time.time() - start_time
+            status["completed"] = chunk_idx
+            status["times"].append(elapsed)
+            avg_time = sum(status["times"]) / len(status["times"])
+            remaining = total_chunks - chunk_idx
+            eta = avg_time * remaining
+            print(f"[Enhancer] Completed chunk {chunk_idx}/{total_chunks} in {elapsed:.1f}s (avg: {avg_time:.1f}s, ETA: {eta:.0f}s)")
+            # delete raw file after enhancement
+            Path(raw_path).unlink(missing_ok=True)
+        except Exception as e:
+            print(f"[Enhancer] Failed chunk {chunk_idx}: {e}")
+    status["state"] = "done"
+
+
 def concatenate_wav_files(wav_paths: list[Path], output_path: Path) -> Path:
     if len(wav_paths) == 1:
         # just copy the single file
@@ -259,6 +291,16 @@ class QwenTtsEngine(TtsEngine):
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                     chunk_wav = Path(tmp.name)
                 sf.write(str(chunk_wav), audio_np, model.sample_rate)
+
+                # enhance each chunk individually (faster than enhancing combined file)
+                if enhance:
+                    print(f"Enhancing chunk {i + 1}/{len(chunks)}...")
+                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                        enhanced_chunk = Path(tmp.name)
+                    enhance_output(chunk_wav, enhanced_chunk)
+                    chunk_wav.unlink()
+                    chunk_wav = enhanced_chunk
+
                 chunk_wavs.append(chunk_wav)
 
                 # free memory from this chunk
@@ -267,14 +309,17 @@ class QwenTtsEngine(TtsEngine):
                 mx.clear_cache()
 
             # concatenate all chunk wavs into final output
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                combined_wav = Path(tmp.name)
+            concatenate_wav_files(chunk_wavs, combined_wav)
+
+            # convert to mp3 if needed
             if output_path.suffix.lower() == ".mp3":
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                    combined_wav = Path(tmp.name)
-                concatenate_wav_files(chunk_wavs, combined_wav)
                 convert_wav_to_mp3(combined_wav, output_path, normalize=True, speed=speed)
                 combined_wav.unlink()
             else:
-                concatenate_wav_files(chunk_wavs, output_path)
+                import shutil
+                shutil.move(str(combined_wav), str(output_path))
 
         finally:
             # clean up chunk temp files
@@ -310,11 +355,13 @@ class VoiceDesignEngine(TtsEngine):
 
     def synthesize(self, text: str, output_path: Path, language: str = "English",
                    temperature: float = DEFAULT_TEMPERATURE, speed: float = DEFAULT_SPEED,
-                   enhance: bool = False) -> Path:
+                   enhance: bool = False, work_dir: Path | None = None) -> Path:
         # ##################################################################
         # synthesize
         # generate speech from text using voice design model
-        # if enhance=True, apply AI enhancement to clean up the output
+        # if enhance=True, enhances each chunk after generation (sequential, not parallel)
+        # if work_dir is provided, uses that directory and resumes from existing chunks
+        import time
         import mlx.core as mx
 
         model = self._get_model()
@@ -323,11 +370,47 @@ class VoiceDesignEngine(TtsEngine):
 
         # split text into chunks for memory-efficient processing
         chunks = split_into_chunks(text)
+        total_chunks = len(chunks)
+
+        # use provided work_dir or create new one
+        if work_dir:
+            work_dir = Path(work_dir)
+            work_dir.mkdir(parents=True, exist_ok=True)
+            resuming = True
+        else:
+            work_dir = Path(tempfile.mkdtemp(prefix="tts_chunks_"))
+            resuming = False
+
+        print(f"\n{'='*60}")
+        print(f"Processing {total_chunks} chunks (enhance: {enhance})")
+        print(f"Work dir: {work_dir}")
+        if resuming:
+            print("Resuming from existing chunks...")
+        print(f"{'='*60}\n")
+
         chunk_wavs: list[Path] = []
+        gen_times: list[float] = []
+        enh_times: list[float] = []
+        total_start = time.time()
 
         try:
+            # Phase 1: Generate all raw chunks
+            print("Phase 1: Generating raw audio chunks")
+            print("-" * 40)
             for i, chunk in enumerate(chunks):
-                print(f"Processing chunk {i + 1}/{len(chunks)}...")
+                raw_path = work_dir / f"raw_{i:04d}.wav"
+                enhanced_path = work_dir / f"enhanced_{i:04d}.wav"
+
+                # skip if raw exists OR enhanced exists (already done)
+                if raw_path.exists() and raw_path.stat().st_size > 1000:
+                    print(f"[Generator] Chunk {i + 1}/{total_chunks} raw exists, skipping")
+                    continue
+                if enhanced_path.exists() and enhanced_path.stat().st_size > 1000:
+                    print(f"[Generator] Chunk {i + 1}/{total_chunks} already enhanced, skipping")
+                    continue
+
+                gen_start = time.time()
+                print(f"[Generator] Starting chunk {i + 1}/{total_chunks}...")
 
                 # generate audio using voice design API
                 results = list(model.generate_voice_design(
@@ -347,32 +430,103 @@ class VoiceDesignEngine(TtsEngine):
                 else:
                     audio_np = np.array(audio, dtype=np.float32)
 
-                # write chunk to temp file immediately to free memory
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                    chunk_wav = Path(tmp.name)
-                sf.write(str(chunk_wav), audio_np, model.sample_rate)
-                chunk_wavs.append(chunk_wav)
+                sf.write(str(raw_path), audio_np, model.sample_rate)
 
-                # free memory from this chunk
+                # track generation time
+                gen_elapsed = time.time() - gen_start
+                gen_times.append(gen_elapsed)
+                avg_gen = sum(gen_times) / len(gen_times)
+                remaining = total_chunks - (i + 1)
+                # count existing chunks we'll skip (raw or enhanced)
+                existing = sum(1 for j in range(i + 1, total_chunks)
+                              if (work_dir / f"raw_{j:04d}.wav").exists()
+                              or (work_dir / f"enhanced_{j:04d}.wav").exists())
+                gen_eta = avg_gen * (remaining - existing)
+
+                print(f"[Generator] Completed chunk {i + 1}/{total_chunks} in {gen_elapsed:.1f}s "
+                      f"(avg: {avg_gen:.1f}s, ETA: {gen_eta:.0f}s)")
+
+                # free memory
                 del results, audio, audio_np
                 gc.collect()
                 mx.clear_cache()
 
-            # concatenate all chunk wavs into final output
-            if output_path.suffix.lower() == ".mp3":
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                    combined_wav = Path(tmp.name)
-                concatenate_wav_files(chunk_wavs, combined_wav)
-                convert_wav_to_mp3(combined_wav, output_path, normalize=True, speed=speed)
-                combined_wav.unlink()
-            else:
-                concatenate_wav_files(chunk_wavs, output_path)
+            # Phase 2: Enhance all chunks (if requested)
+            if enhance:
+                print(f"\n{'='*60}")
+                print("Phase 2: Enhancing audio chunks")
+                print("-" * 40)
+                for i in range(total_chunks):
+                    raw_path = work_dir / f"raw_{i:04d}.wav"
+                    enhanced_path = work_dir / f"enhanced_{i:04d}.wav"
 
-        finally:
-            # clean up chunk temp files
-            for chunk_wav in chunk_wavs:
-                if chunk_wav.exists():
-                    chunk_wav.unlink()
+                    # skip if already enhanced
+                    if enhanced_path.exists() and enhanced_path.stat().st_size > 1000:
+                        print(f"[Enhancer] Chunk {i + 1}/{total_chunks} already enhanced, skipping")
+                        chunk_wavs.append(enhanced_path)
+                        continue
+
+                    if not raw_path.exists():
+                        raise RuntimeError(f"Raw chunk {i + 1} missing: {raw_path}")
+
+                    enh_start = time.time()
+                    print(f"[Enhancer] Starting chunk {i + 1}/{total_chunks}...")
+
+                    enhance_output(raw_path, enhanced_path)
+
+                    enh_elapsed = time.time() - enh_start
+                    enh_times.append(enh_elapsed)
+                    avg_enh = sum(enh_times) / len(enh_times)
+                    remaining = total_chunks - (i + 1)
+                    existing = sum(1 for j in range(i + 1, total_chunks)
+                                  if (work_dir / f"enhanced_{j:04d}.wav").exists())
+                    enh_eta = avg_enh * (remaining - existing)
+
+                    print(f"[Enhancer] Completed chunk {i + 1}/{total_chunks} in {enh_elapsed:.1f}s "
+                          f"(avg: {avg_enh:.1f}s, ETA: {enh_eta:.0f}s)")
+
+                    chunk_wavs.append(enhanced_path)
+                    # delete raw after enhancing
+                    raw_path.unlink(missing_ok=True)
+            else:
+                # no enhancement - use raw files
+                for i in range(total_chunks):
+                    chunk_wavs.append(work_dir / f"raw_{i:04d}.wav")
+
+            # Phase 3: Concatenate
+            print(f"\n{'='*60}")
+            print(f"Phase 3: Concatenating {len(chunk_wavs)} chunks...")
+            combined_wav = work_dir / "combined.wav"
+            concatenate_wav_files(chunk_wavs, combined_wav)
+
+            # convert to final format
+            if output_path.suffix.lower() == ".mp3":
+                convert_wav_to_mp3(combined_wav, output_path, normalize=True, speed=speed)
+            else:
+                import shutil
+                shutil.move(str(combined_wav), str(output_path))
+
+            # final stats
+            total_elapsed = time.time() - total_start
+            print(f"\n{'='*60}")
+            print(f"Complete! Total time: {total_elapsed:.1f}s ({total_elapsed/60:.1f} min)")
+            if gen_times:
+                print(f"Avg generation: {sum(gen_times)/len(gen_times):.1f}s/chunk ({len(gen_times)} generated)")
+            if enh_times:
+                print(f"Avg enhancement: {sum(enh_times)/len(enh_times):.1f}s/chunk ({len(enh_times)} enhanced)")
+            print(f"Output: {output_path}")
+            print(f"{'='*60}\n")
+
+            # clean up work directory on success
+            import shutil
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+        except Exception as e:
+            print(f"\n{'='*60}")
+            print(f"ERROR: {e}")
+            print(f"Work directory preserved for resume: {work_dir}")
+            print(f"{'='*60}\n")
+            raise
 
         return output_path
 
@@ -382,7 +536,7 @@ class VoiceDesignEngine(TtsEngine):
 # implementation using qwen3-tts base model for voice cloning from audio samples
 class VoiceCloneEngine(TtsEngine):
 
-    def __init__(self, model_name: str = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16",
+    def __init__(self, model_name: str = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16",
                  ref_audio: str = "", ref_text: str = ""):
         # ##################################################################
         # init
@@ -464,6 +618,16 @@ class VoiceCloneEngine(TtsEngine):
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                     chunk_wav = Path(tmp.name)
                 sf.write(str(chunk_wav), audio_np, model.sample_rate)
+
+                # enhance each chunk individually (faster than enhancing combined file)
+                if enhance:
+                    print(f"Enhancing chunk {i + 1}/{len(chunks)}...")
+                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                        enhanced_chunk = Path(tmp.name)
+                    enhance_output(chunk_wav, enhanced_chunk)
+                    chunk_wav.unlink()
+                    chunk_wav = enhanced_chunk
+
                 chunk_wavs.append(chunk_wav)
 
                 # free memory from this chunk
@@ -475,15 +639,6 @@ class VoiceCloneEngine(TtsEngine):
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                 combined_wav = Path(tmp.name)
             concatenate_wav_files(chunk_wavs, combined_wav)
-
-            # optionally enhance output with AI
-            if enhance:
-                print("Enhancing output with AI...")
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                    enhanced_wav = Path(tmp.name)
-                enhance_output(combined_wav, enhanced_wav)
-                combined_wav.unlink()
-                combined_wav = enhanced_wav
 
             # convert to mp3 if needed
             if output_path.suffix.lower() == ".mp3":

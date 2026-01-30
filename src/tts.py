@@ -6,7 +6,7 @@ from pathlib import Path
 import setproctitle
 from colorama import Fore, Style, init
 
-from src.tts_engine import QWEN_VOICES, DEFAULT_VOICE, DEFAULT_TEMPERATURE, DEFAULT_SPEED, register_voice, list_custom_voices
+from src.tts_engine import QWEN_VOICES, DEFAULT_VOICE, DEFAULT_TEMPERATURE, DEFAULT_SPEED, list_custom_voices
 
 init(autoreset=True)
 
@@ -78,17 +78,12 @@ def main(argv: list[str]) -> int:
         default=None,
         help="Voice description for voice design (creates voice on-the-fly)",
     )
-
-    # register-voice command
-    p_reg = sub.add_parser("register-voice", help="Register a custom voice description")
-    p_reg.add_argument("name", help="Name for the voice (e.g., 'bob')")
-    p_reg.add_argument("description", help="Voice description (e.g., 'A deep voiced man...')")
-    p_reg.add_argument(
-        "-s", "--speed",
-        type=float,
-        default=DEFAULT_SPEED,
-        help=f"Default speed for this voice (default: {DEFAULT_SPEED})",
+    p_gen.add_argument(
+        "-e", "--enhance",
+        action="store_true",
+        help="Apply AI enhancement to output (ultra quality, slower)",
     )
+
 
     # list-voices command
     sub.add_parser("list-voices", help="List available voices")
@@ -99,11 +94,6 @@ def main(argv: list[str]) -> int:
     if args.command is None:
         # re-parse with generate as implicit command
         return main(["generate"] + argv)
-
-    if args.command == "register-voice":
-        register_voice(args.name, args.description, args.speed)
-        print(f"{Fore.GREEN}✓{Style.RESET_ALL} Registered voice '{Fore.CYAN}{args.name}{Style.RESET_ALL}' with speed {Fore.YELLOW}{args.speed}{Style.RESET_ALL}")
-        return 0
 
     if args.command == "list-voices":
         print(f"\n{Fore.BLUE}{Style.BRIGHT}Built-in voices:{Style.RESET_ALL}")
@@ -118,15 +108,22 @@ def main(argv: list[str]) -> int:
             for v in custom:
                 info = registry[v]
                 if info.get("type") == "clone":
-                    cloned.append((v, info))
+                    # clone voices with a description are designed-then-cloned
+                    if info.get("description"):
+                        designed.append((v, info))
+                    else:
+                        cloned.append((v, info))
                 else:
+                    # legacy description-only voices (slow VoiceDesign each time)
                     designed.append((v, info))
             if designed:
                 print(f"\n{Fore.MAGENTA}{Style.BRIGHT}Designed voices:{Style.RESET_ALL}")
                 for v, info in designed:
                     desc = info.get("description", "No description")
                     speed = info.get('speed', 1.0)
-                    print(f"  {Fore.WHITE}•{Style.RESET_ALL} {Fore.GREEN}{v}{Style.RESET_ALL}: {Fore.WHITE}{desc[:50]}...{Style.RESET_ALL} {Style.DIM}(speed: {speed}){Style.RESET_ALL}")
+                    is_clone = info.get("type") == "clone"
+                    suffix = f" {Fore.GREEN}(fast){Style.RESET_ALL}" if is_clone else f" {Fore.RED}(slow){Style.RESET_ALL}"
+                    print(f"  {Fore.WHITE}•{Style.RESET_ALL} {Fore.GREEN}{v}{Style.RESET_ALL}: {Fore.WHITE}{desc[:50]}...{Style.RESET_ALL}{suffix} {Style.DIM}(speed: {speed}){Style.RESET_ALL}")
             if cloned:
                 print(f"\n{Fore.YELLOW}{Style.BRIGHT}Cloned voices:{Style.RESET_ALL}")
                 for v, info in cloned:
@@ -152,6 +149,7 @@ def main(argv: list[str]) -> int:
                     temperature=args.temperature,
                     speed=args.speed,
                     voice_description=args.voice_description,
+                    enhance=args.enhance,
                 )
             else:
                 # treat as inline text
@@ -164,6 +162,7 @@ def main(argv: list[str]) -> int:
                     temperature=args.temperature,
                     speed=args.speed,
                     voice_description=args.voice_description,
+                    enhance=args.enhance,
                 )
             print(f"{Fore.GREEN}✓{Style.RESET_ALL} Generated: {Fore.CYAN}{output_path}{Style.RESET_ALL}")
             return 0

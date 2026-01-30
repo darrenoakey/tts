@@ -1,0 +1,45 @@
+# Voice Training Script
+# Phonetically balanced text covering all English phonemes, diphthongs, and prosodic patterns
+# Reading time: approximately 5 minutes at normal pace (130-150 wpm)
+
+## Part One: The Rainbow Passage
+
+When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is a division of white light into many beautiful colors. These take the shape of a long round arch, with its path high above, and its two ends apparently beyond the horizon.
+
+There is, according to legend, a boiling pot of gold at one end. People look, but no one ever finds it. When a man looks for something beyond his reach, his friends say he is looking for the pot of gold at the end of the rainbow.
+
+Throughout the centuries people have explained the rainbow in various ways. Some have accepted it as a miracle without physical explanation. To the Hebrews it was a token that there would be no more universal floods. The Greeks used to imagine that it was a sign from the gods to foretell war or heavy rain. The Norsemen considered the rainbow as a bridge over which the gods passed from earth to their home in the sky.
+
+Others have tried to explain the phenomenon physically. Aristotle thought that the rainbow was caused by reflection of the sun's rays by the rain. Since then physicists have found that it is not reflection, but refraction by the raindrops which causes the rainbows.
+
+## Part Two: The Grandfather Passage
+
+You wished to know all about my grandfather. Well, he is nearly ninety-three years old. He dresses himself in an ancient black frock coat, usually minus several buttons; yet he still thinks as swiftly as ever. A long, flowing beard clings to his chin, giving those who observe him a pronounced feeling of the utmost respect. When he speaks his voice is just a bit cracked and quivers a trifle. Twice each day he plays skillfully and with zest upon our small organ. Except in the winter when the ooze or snow or ice prevents, he slowly takes a short walk in the open air each day. We have often urged him to walk more and smoke less, but he always answers, "Banana Oil!" Grandfather likes to be modern in his language.
+
+## Part Three: Phonetic Coverage Sentences
+
+The birch canoe slid smoothly on the calm lake surface. A thick fog crept over the jagged mountain peaks at dawn. She held the heavy bronze jar with both hands, feeling its cool weight. The quick brown fox jumped lazily over the sleeping dog.
+
+Please call Stella and ask her about the weekly meeting schedule. The views from that church tower were breathtaking on a clear Thursday evening. A large size in stockings is hard to sell, but the right pitch makes all the difference.
+
+The boy was there when the sun rose brightly over the eastern hills. We will go to the zone where fresh water mixes with the salty ocean. Young children should avoid taking these strong medicines without guidance.
+
+## Part Four: Varied Prosody and Emotion
+
+How wonderful! The garden was absolutely magnificent this morning. I couldn't believe my eyes when I saw the roses in full bloom. Did you notice the butterflies dancing among the flowers?
+
+Wait, what was that noise? Something moved in the shadows near the old oak tree. Perhaps it was just the wind rustling through the leaves. Still, one can never be too careful on such a dark and stormy night.
+
+The project deadline approaches rapidly. We must work together efficiently. First, gather all necessary materials. Second, assign clear responsibilities. Third, establish regular check-ins. Finally, celebrate our success when we finish.
+
+She sells seashells by the seashore. The shells she sells are seashells, I'm sure. Peter Piper picked a peck of pickled peppers. How many pecks of pickled peppers did Peter Piper pick?
+
+## Part Five: Complex Articulation
+
+The sixth sick sheik's sixth sheep is sick. Unique New York, you know you need unique New York. Red lorry, yellow lorry, red lorry, yellow lorry. Freshly fried flying fish, freshly fried flesh.
+
+Strength and strategy are essential for success. The mathematician calculated the circumference precisely. Thoroughly thrilling theatrical performances astounded audiences. Sophisticated philosophical discussions require considerable patience.
+
+As the azure afternoon approached autumn, artists assembled around ancient architecture. Beautiful birds brought brilliant blossoms beside babbling brooks. Curious children carefully collected colorful crystals, creating captivating combinations.
+
+The weather whether we like it or not will change with the seasons. Through thick and thin, through trials and tribulations, we persevere. What we do today echoes through eternity, shaping tomorrow's world.
