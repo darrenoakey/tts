@@ -152,11 +152,17 @@ def enhance_output(input_path: Path, output_path: Path, quality: str = "ultra") 
 # ##################################################################
 # memory safety threshold
 # if available memory falls below this (in GB), abort before OOM crash
-MEMORY_SAFETY_THRESHOLD_GB = 4.0
+# set low (1.5GB) since macOS aggressively uses memory for file cache
+# and will reclaim it as needed - we just want to catch truly critical situations
+MEMORY_SAFETY_THRESHOLD_GB = 1.5
 
 
 def get_available_memory_gb() -> float:
-    """Get available system memory in GB (macOS specific)."""
+    """Get available system memory in GB (macOS specific).
+
+    Includes free, speculative, and inactive (reclaimable cache) pages
+    since macOS will reclaim inactive pages when apps need memory.
+    """
     try:
         # use vm_stat for macOS
         result = subprocess.run(["vm_stat"], capture_output=True, text=True)
@@ -166,14 +172,22 @@ def get_available_memory_gb() -> float:
         lines = result.stdout.strip().split("\n")
         page_size = 4096  # default page size on macOS
 
-        free_pages = 0
+        available_pages = 0
         for line in lines:
+            # free pages - truly unused
             if "Pages free:" in line:
-                free_pages += int(line.split(":")[1].strip().rstrip("."))
+                available_pages += int(line.split(":")[1].strip().rstrip("."))
+            # speculative pages - prefetched, immediately reclaimable
             elif "Pages speculative:" in line:
-                free_pages += int(line.split(":")[1].strip().rstrip("."))
+                available_pages += int(line.split(":")[1].strip().rstrip("."))
+            # inactive pages - file cache, reclaimable when needed
+            elif "Pages inactive:" in line:
+                available_pages += int(line.split(":")[1].strip().rstrip("."))
+            # purgeable pages - can be freed immediately
+            elif "Pages purgeable:" in line:
+                available_pages += int(line.split(":")[1].strip().rstrip("."))
 
-        return (free_pages * page_size) / (1024**3)
+        return (available_pages * page_size) / (1024**3)
     except Exception:
         return float("inf")  # can't check, assume OK
 
@@ -183,7 +197,7 @@ def check_memory_safe(operation: str = "operation") -> None:
     available = get_available_memory_gb()
     if available < MEMORY_SAFETY_THRESHOLD_GB:
         raise MemoryError(
-            f"Aborting {operation}: only {available:.1f}GB memory available "
+            f"Aborting {operation}: only {available:.1f}GB available memory "
             f"(threshold: {MEMORY_SAFETY_THRESHOLD_GB}GB). "
             "Try closing other applications or reducing chunk count."
         )
