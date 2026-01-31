@@ -388,12 +388,21 @@ except Exception as e:
             if not line.startswith("LAST_COMPLETED:"):
                 print(line)
 
-    # parse last completed index from output
+    # parse last completed index from output (for clean exits)
     last_completed = start_index - 1
     if result.stdout:
         for line in result.stdout.strip().split('\n'):
             if line.startswith("LAST_COMPLETED:"):
                 last_completed = int(line.split(':')[1])
+
+    # if subprocess crashed (no LAST_COMPLETED), check which files exist
+    if last_completed == start_index - 1 and result.returncode != 0:
+        # check which output files actually exist
+        for i in range(len(output_wavs) - 1, start_index - 1, -1):
+            wav_path = Path(output_wavs[i])
+            if wav_path.exists() and wav_path.stat().st_size > 100:
+                last_completed = i
+                break
 
     if result.returncode != 0 and result.returncode != EXIT_CODE_MEMORY_RESTART:
         print(f"Subprocess stderr: {result.stderr}", file=sys.stderr)
@@ -414,13 +423,19 @@ def synthesize_with_restart(
     model_name: str | None = None,
 ) -> int:
     """
-    Synthesize all chunks, restarting subprocess if memory limit exceeded.
+    Synthesize all chunks, restarting subprocess on any failure.
+    Handles memory limit exceeded (code 77) and GPU crashes (SIGABRT, etc).
     Returns 0 on success, 1 on error.
     """
+    import time
+
     start_index = 0
     max_restarts = 50  # safety limit
+    consecutive_failures = 0
+    max_consecutive_failures = 5  # give up if same chunk fails 5 times
+    restart_delay_seconds = 5  # give GPU time to recover between crashes
 
-    for _ in range(max_restarts):
+    for restart_num in range(max_restarts):
         rc, last_completed = _synthesize_subprocess(
             engine_type=engine_type,
             chunks=chunks,
@@ -437,13 +452,34 @@ def synthesize_with_restart(
 
         if rc == 0:
             return 0  # success
-        elif rc == EXIT_CODE_MEMORY_RESTART:
-            start_index = last_completed + 1
-            if start_index >= len(chunks):
-                return 0  # all done
-            print(f"Restarting subprocess from chunk {start_index + 1}/{len(chunks)}...")
+
+        # any failure - restart from next completed chunk
+        new_start = last_completed + 1
+        if new_start >= len(chunks):
+            return 0  # all done despite error on last chunk
+
+        if new_start == start_index:
+            # no progress - same chunk failing repeatedly
+            consecutive_failures += 1
+            if consecutive_failures >= max_consecutive_failures:
+                print(f"Chunk {start_index + 1} failed {consecutive_failures} times, giving up", file=sys.stderr)
+                return 1
+            print(f"Chunk {start_index + 1} failed (attempt {consecutive_failures}/{max_consecutive_failures}), retrying...")
         else:
-            return rc  # error
+            # made progress - reset failure counter
+            consecutive_failures = 0
+            start_index = new_start
+
+        if rc == EXIT_CODE_MEMORY_RESTART:
+            print(f"Memory limit exceeded, restarting from chunk {start_index + 1}/{len(chunks)}...")
+        else:
+            # GPU crash or other error (e.g., SIGABRT = -6)
+            print(f"Subprocess crashed (exit {rc}), restarting from chunk {start_index + 1}/{len(chunks)}...")
+            # give GPU time to recover before retrying
+            if restart_num < max_restarts - 1:
+                delay = restart_delay_seconds * (1 + consecutive_failures)  # exponential backoff
+                print(f"Waiting {delay}s for GPU to recover...")
+                time.sleep(delay)
 
     print(f"Max restarts ({max_restarts}) exceeded", file=sys.stderr)
     return 1
