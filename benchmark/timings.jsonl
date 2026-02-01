@@ -1,0 +1,12 @@
+{"words":32,"model":"0.6B","gen_time_sec":48.415553000,"audio_duration_sec":12.640000}
+{"words":32,"model":"1.7B","gen_time_sec":42.498107000,"audio_duration_sec":12.720000}
+{"words":64,"model":"0.6B","gen_time_sec":72.285492000,"audio_duration_sec":24.160000}
+{"words":64,"model":"1.7B","gen_time_sec":74.532226000,"audio_duration_sec":24.160000}
+{"words":128,"model":"0.6B","gen_time_sec":142.398157000,"audio_duration_sec":47.040979}
+{"words":128,"model":"1.7B","gen_time_sec":140.723157000,"audio_duration_sec":47.040979}
+{"words":256,"model":"0.6B","gen_time_sec":311.438564000,"audio_duration_sec":106.000083}
+{"words":256,"model":"1.7B","gen_time_sec":328.154758000,"audio_duration_sec":105.440042}
+{"words":512,"model":"0.6B","gen_time_sec":638.561441000,"audio_duration_sec":208.400208}
+{"words":512,"model":"1.7B","gen_time_sec":635.770241000,"audio_duration_sec":208.480167}
+{"words":1024,"model":"0.6B","gen_time_sec":1302.851695000,"audio_duration_sec":436.640250}
+{"words":1024,"model":"1.7B","gen_time_sec":2297.186111000,"audio_duration_sec":436.320979}

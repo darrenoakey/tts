@@ -87,24 +87,25 @@ def test_tts_engine_interface():
 
 # ##################################################################
 # test split into chunks with short text
-# verify short text returns single chunk
+# verify short text returns single chunk when under word limit
 def test_split_into_chunks_short_text():
     text = "Hello world. This is a test."
-    chunks = split_into_chunks(text, sentences_per_chunk=5)
+    chunks = split_into_chunks(text, max_words=100)
     assert len(chunks) == 1
     assert chunks[0] == text
 
 
 # ##################################################################
 # test split into chunks with long text
-# verify long text is split into multiple chunks
+# verify long text is split at sentence boundaries based on word count
 def test_split_into_chunks_long_text():
+    # each sentence has 2 words, limit to 5 words per chunk
     text = "Sentence one. Sentence two. Sentence three. Sentence four. Sentence five. Sentence six."
-    chunks = split_into_chunks(text, sentences_per_chunk=2)
+    chunks = split_into_chunks(text, max_words=5)
     assert len(chunks) == 3
-    assert chunks[0] == "Sentence one. Sentence two."
-    assert chunks[1] == "Sentence three. Sentence four."
-    assert chunks[2] == "Sentence five. Sentence six."
+    assert chunks[0] == "Sentence one. Sentence two."  # 4 words
+    assert chunks[1] == "Sentence three. Sentence four."  # 4 words
+    assert chunks[2] == "Sentence five. Sentence six."  # 4 words
 
 
 # ##################################################################
@@ -112,18 +113,31 @@ def test_split_into_chunks_long_text():
 # verify splitting works with exclamation and question marks
 def test_split_into_chunks_different_punctuation():
     text = "Hello! How are you? I am fine. That is great!"
-    chunks = split_into_chunks(text, sentences_per_chunk=2)
+    # limit to 8 words allows "Hello!"(1) + "How are you?"(3) + "I am fine."(3) = 7 words
+    chunks = split_into_chunks(text, max_words=8)
     assert len(chunks) == 2
-    assert chunks[0] == "Hello! How are you?"
-    assert chunks[1] == "I am fine. That is great!"
+    assert chunks[0] == "Hello! How are you? I am fine."  # 7 words
+    assert chunks[1] == "That is great!"  # 4 words
 
 
 # ##################################################################
 # test split into chunks with empty text
 # verify empty text returns empty list
 def test_split_into_chunks_empty():
-    chunks = split_into_chunks("", sentences_per_chunk=5)
+    chunks = split_into_chunks("", max_words=100)
     assert chunks == []
+
+
+# ##################################################################
+# test split into chunks respects sentence boundaries
+# verify chunks don't exceed word limit and stop at sentences
+def test_split_into_chunks_word_boundary():
+    # 10 word sentence followed by 5 word sentence
+    text = "This is a longer sentence with exactly ten words in it. Short five word sentence here."
+    chunks = split_into_chunks(text, max_words=12)
+    assert len(chunks) == 2
+    assert chunks[0] == "This is a longer sentence with exactly ten words in it."  # 10 words
+    assert chunks[1] == "Short five word sentence here."  # 5 words
 
 
 # ##################################################################

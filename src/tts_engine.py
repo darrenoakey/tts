@@ -24,9 +24,10 @@ DEFAULT_VOICE = "aiden"
 DEFAULT_TEMPERATURE = 0.9
 DEFAULT_SPEED = 1.0
 
-# chunk size for processing long texts (in sentences)
-# smaller chunks = more stable memory but slightly more overhead
-DEFAULT_CHUNK_SENTENCES = 3
+# chunk size for processing long texts (in words)
+# target ~600 words per chunk, stopping at sentence boundaries
+# this typically results in ~500-600 word chunks
+DEFAULT_CHUNK_WORDS = 600
 
 # voice registry location
 VOICE_REGISTRY_PATH = Path(__file__).parent.parent / "voices.json"
@@ -62,8 +63,8 @@ def list_custom_voices() -> list[str]:
 
 # ##################################################################
 # split text into chunks
-# splits text into chunks of approximately n sentences each
-def split_into_chunks(text: str, sentences_per_chunk: int = DEFAULT_CHUNK_SENTENCES) -> list[str]:
+# splits text into chunks of approximately n words, stopping at sentence boundaries
+def split_into_chunks(text: str, max_words: int = DEFAULT_CHUNK_WORDS) -> list[str]:
     text = text.strip()
     if not text:
         return []
@@ -72,14 +73,31 @@ def split_into_chunks(text: str, sentences_per_chunk: int = DEFAULT_CHUNK_SENTEN
     sentences = re.split(r"(?<=[.!?])\s+", text)
     sentences = [s.strip() for s in sentences if s.strip()]
 
-    if len(sentences) <= sentences_per_chunk:
+    # if total words <= max_words, return as single chunk
+    total_words = len(text.split())
+    if total_words <= max_words:
         return [text]
 
     chunks = []
-    for i in range(0, len(sentences), sentences_per_chunk):
-        chunk = " ".join(sentences[i : i + sentences_per_chunk])
-        if chunk:
-            chunks.append(chunk)
+    current_chunk: list[str] = []
+    current_word_count = 0
+
+    for sentence in sentences:
+        sentence_words = len(sentence.split())
+
+        # if adding this sentence would exceed limit and we have content, start new chunk
+        if current_word_count + sentence_words > max_words and current_chunk:
+            chunks.append(" ".join(current_chunk))
+            current_chunk = []
+            current_word_count = 0
+
+        current_chunk.append(sentence)
+        current_word_count += sentence_words
+
+    # add remaining content
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+
     return chunks
 
 
