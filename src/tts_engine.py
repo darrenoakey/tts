@@ -254,6 +254,7 @@ def _synthesize_subprocess(
     Exit code 0 = all done, 77 = memory restart needed, 1 = error.
     """
     import json
+
     chunks_json = json.dumps(chunks)
     output_wavs_json = json.dumps(output_wavs)
 
@@ -402,16 +403,16 @@ except Exception as e:
 
     # print stdout (progress messages)
     if result.stdout:
-        for line in result.stdout.strip().split('\n'):
+        for line in result.stdout.strip().split("\n"):
             if not line.startswith("LAST_COMPLETED:"):
                 print(line)
 
     # parse last completed index from output (for clean exits)
     last_completed = start_index - 1
     if result.stdout:
-        for line in result.stdout.strip().split('\n'):
+        for line in result.stdout.strip().split("\n"):
             if line.startswith("LAST_COMPLETED:"):
-                last_completed = int(line.split(':')[1])
+                last_completed = int(line.split(":")[1])
 
     # if subprocess crashed (no LAST_COMPLETED), check which files exist
     if last_completed == start_index - 1 and result.returncode != 0:
@@ -482,7 +483,9 @@ def synthesize_with_restart(
             if consecutive_failures >= max_consecutive_failures:
                 print(f"Chunk {start_index + 1} failed {consecutive_failures} times, giving up", file=sys.stderr)
                 return 1
-            print(f"Chunk {start_index + 1} failed (attempt {consecutive_failures}/{max_consecutive_failures}), retrying...")
+            print(
+                f"Chunk {start_index + 1} failed (attempt {consecutive_failures}/{max_consecutive_failures}), retrying..."
+            )
         else:
             # made progress - reset failure counter
             consecutive_failures = 0
@@ -686,6 +689,7 @@ class VoiceDesignEngine(TtsEngine):
         temperature: float = DEFAULT_TEMPERATURE,
         speed: float = DEFAULT_SPEED,
         enhance: bool = False,
+        enhance_quality: str = "ultra",
         work_dir: Path | None = None,
     ) -> Path:
         # ##################################################################
@@ -713,7 +717,7 @@ class VoiceDesignEngine(TtsEngine):
             resuming = False
 
         print(f"\n{'=' * 60}")
-        print(f"Processing {total_chunks} chunks (enhance: {enhance})")
+        print(f"Processing {total_chunks} chunks (enhance: {enhance}, quality: {enhance_quality})")
         print(f"Work dir: {work_dir}")
         if resuming:
             print("Resuming from existing chunks...")
@@ -801,9 +805,9 @@ class VoiceDesignEngine(TtsEngine):
                         raise RuntimeError(f"Raw chunk {i + 1} missing: {raw_path}")
 
                     enh_start = time.time()
-                    print(f"[Enhancer] Starting chunk {i + 1}/{total_chunks}...")
+                    print(f"[Enhancer] Starting chunk {i + 1}/{total_chunks} ({enhance_quality})...")
 
-                    enhance_output(raw_path, enhanced_path)
+                    enhance_output(raw_path, enhanced_path, quality=enhance_quality)
 
                     enh_elapsed = time.time() - enh_start
                     enh_times.append(enh_elapsed)
@@ -868,7 +872,11 @@ class VoiceDesignEngine(TtsEngine):
 # implementation using qwen3-tts base model for voice cloning from audio samples
 class VoiceCloneEngine(TtsEngine):
     def __init__(
-        self, model_name: str = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16", ref_audio: str = "", ref_text: str = ""
+        self,
+        model_name: str = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16",
+        ref_audio: str = "",
+        ref_text: str = "",
+        temp_dir: Path | None = None,
     ):
         # ##################################################################
         # init
@@ -879,6 +887,7 @@ class VoiceCloneEngine(TtsEngine):
         self.ref_text = ref_text
         self._model = None
         self._ref_audio_array = None  # cached resampled reference audio
+        self._temp_dir = temp_dir  # temp directory to clean up after synthesis
 
     def _get_model(self):
         # ##################################################################
@@ -966,8 +975,44 @@ class VoiceCloneEngine(TtsEngine):
             for chunk_wav in chunk_wavs:
                 if chunk_wav.exists():
                     chunk_wav.unlink()
+            # clean up temp directory from zip extraction
+            if self._temp_dir and self._temp_dir.exists():
+                shutil.rmtree(self._temp_dir, ignore_errors=True)
 
         return output_path
+
+
+# ##################################################################
+# load engine from zip
+# extract voice package zip and return VoiceCloneEngine
+def load_engine_from_zip(zip_path: str) -> "VoiceCloneEngine":
+    import zipfile
+
+    zip_file = Path(zip_path)
+    if not zip_file.exists():
+        raise FileNotFoundError(f"Voice package not found: {zip_path}")
+
+    # extract to temp directory
+    extract_dir = Path(tempfile.mkdtemp(prefix="voice_pkg_"))
+
+    with zipfile.ZipFile(zip_file, "r") as zf:
+        zf.extractall(extract_dir)
+
+    voice_wav = extract_dir / "voice.wav"
+    voice_txt = extract_dir / "voice.txt"
+
+    if not voice_wav.exists():
+        raise ValueError(f"Voice package missing voice.wav: {zip_path}")
+    if not voice_txt.exists():
+        raise ValueError(f"Voice package missing voice.txt: {zip_path}")
+
+    ref_text = voice_txt.read_text().strip()
+
+    return VoiceCloneEngine(
+        ref_audio=str(voice_wav),
+        ref_text=ref_text,
+        temp_dir=extract_dir,
+    )
 
 
 # ##################################################################
@@ -979,6 +1024,10 @@ def get_engine(model: str = "qwen", voice: str = DEFAULT_VOICE, voice_descriptio
     # return the appropriate engine implementation for the given model and voice
     # if voice_description is provided, use VoiceDesignEngine
     # if voice is a registered custom voice name, look up its description or ref_audio
+
+    # check if voice is a zip file (portable voice package)
+    if voice.endswith(".zip"):
+        return load_engine_from_zip(voice)
 
     # check if voice is a registered custom voice
     custom_voice = get_voice_description(voice)

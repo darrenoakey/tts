@@ -56,10 +56,19 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 
 **Voice commands**:
 - `./run design-voice myvoice "description..."` - Create voice from text description (generates template, saves as clone)
+- `./run export-voice myvoice "description..."` - Create portable voice package (zip file)
 - `./run clone-voice myvoice recording.wav` - Create cloned voice from your own audio
 - `./run scrape-voice "Nathan Fillion"` - Create cloned voice from celebrity
 - `./run list-celebs` - List all 58 available celebrities on moviesoundclips.net
 - `./run list-voices` - Show built-in, designed, and cloned voices
+
+**Portable voice packages**:
+- `./run export-voice narrator "A warm narrator..." -q hq` - Creates `narrator.voice.zip`
+- Contains `voice.wav` (reference audio) and `voice.txt` (reference text)
+- Uses `script_30.txt` (~30 seconds) for faster generation
+- Quality options: `default` (fastest), `hq` (default), `ultra` (slowest)
+- Use with: `./run tts "Hello" -v ./narrator.voice.zip`
+- Voices are self-contained - no global registration needed
 
 **Voice training scripts**:
 - `script_30.txt` - 30-second script (~45 words) - quick voice tests
