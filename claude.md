@@ -22,7 +22,7 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 ## Architecture
 
 - **MLX backend**: Uses mlx-audio for efficient Apple Silicon inference
-- **Chunked processing**: Long texts split into ~3 sentence chunks to prevent memory spikes
+- **Chunked processing**: Long texts split into ~600 word chunks (at sentence boundaries) to prevent memory spikes and avoid 1.7B model degradation
 - **Subprocess isolation**: Model runs in isolated subprocess, exits cleanly when done
   - QwenTtsEngine/VoiceCloneEngine: ONE subprocess for ALL chunks (avoids asyncio SIGCHLD conflicts with autoblog)
   - VoiceDesignEngine: one subprocess per chunk (supports resumability via work_dir)
@@ -62,6 +62,7 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 - `./run list-voices` - Show built-in, designed, and cloned voices
 
 **Voice training scripts**:
+- `script_30.txt` - 30-second script (~45 words) - quick voice tests
 - `script.txt` - 2-minute phonetically balanced text (~270 words) - use for voice design
 - `script16.txt` - 16-minute extended script (~720 words) - for maximum voice capture
 
@@ -73,8 +74,13 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 
 **Voice Cloning** (Base models):
 - 0.6B: `mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16` (faster)
-- 1.7B: `mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16` (1.3x slower, better quality, **default**)
+- 1.7B: `mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16` (same speed up to ~500 words, degrades beyond that, **default**)
 - All models use bf16 (bfloat16) - full precision, NOT quantized
+
+**Model performance** (benchmarked with gary voice):
+- Both models: ~1.1-1.3 seconds per word up to 512 words
+- 1.7B degrades to 2.24 s/word at 1024 words (1.76x slower than 0.6B)
+- Chunking at 600 words keeps both models in optimal range
 
 ## Gotchas
 
