@@ -316,18 +316,23 @@ try:
                    capture_output=True, check=True)
             ref_data, _ = sf.read(resampled_path)
             resampled_path.unlink()
-        ref_audio_array = mx.array(ref_data.astype(np.float32))
+        # CRITICAL: Limit reference audio and text to ~15 seconds
+        # Longer references cause the model to confuse ref_text with input text
+        # and output the training script instead of the requested dialogue
+        MAX_REF_SECONDS = 15
+        MAX_REF_WORDS = int(MAX_REF_SECONDS * 2.5)  # ~37 words at 150 WPM
 
-        # CRITICAL: truncate ref_text to match ref_audio duration
-        # When ref_text is much longer than ref_audio, the model confuses
-        # ref_text with input text and speaks the wrong content
         ref_audio_duration = len(ref_data) / model.sample_rate
-        # Estimate words per second (roughly 2.5 words/sec = 150 WPM)
-        max_ref_words = int(ref_audio_duration * 2.5)
+        if ref_audio_duration > MAX_REF_SECONDS:
+            ref_data = ref_data[:int(model.sample_rate * MAX_REF_SECONDS)]
+            print(f"Truncated ref_audio from {{ref_audio_duration:.1f}}s to {{MAX_REF_SECONDS}}s", flush=True)
+
         ref_text_words = ref_text.split()
-        if len(ref_text_words) > max_ref_words:
-            ref_text = ' '.join(ref_text_words[:max_ref_words])
-            print(f"Truncated ref_text to {{max_ref_words}} words to match {{ref_audio_duration:.1f}}s audio", flush=True)
+        if len(ref_text_words) > MAX_REF_WORDS:
+            ref_text = ' '.join(ref_text_words[:MAX_REF_WORDS])
+            print(f"Truncated ref_text from {{len(ref_text_words)}} to {{MAX_REF_WORDS}} words", flush=True)
+
+        ref_audio_array = mx.array(ref_data.astype(np.float32))
     else:
         raise ValueError(f"Unknown engine type: {{engine_type}}")
 
