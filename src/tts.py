@@ -107,7 +107,7 @@ def main(argv: list[str]) -> int:
     p_multi.add_argument(
         "input",
         type=Path,
-        help="Input JSONL file with dialogue lines like {\"bob\": \"hello\"}",
+        help='Input JSONL file with dialogue lines like {"bob": "hello"}',
     )
     p_multi.add_argument(
         "-o",

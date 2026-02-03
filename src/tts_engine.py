@@ -317,6 +317,17 @@ try:
             ref_data, _ = sf.read(resampled_path)
             resampled_path.unlink()
         ref_audio_array = mx.array(ref_data.astype(np.float32))
+
+        # CRITICAL: truncate ref_text to match ref_audio duration
+        # When ref_text is much longer than ref_audio, the model confuses
+        # ref_text with input text and speaks the wrong content
+        ref_audio_duration = len(ref_data) / model.sample_rate
+        # Estimate words per second (roughly 2.5 words/sec = 150 WPM)
+        max_ref_words = int(ref_audio_duration * 2.5)
+        ref_text_words = ref_text.split()
+        if len(ref_text_words) > max_ref_words:
+            ref_text = ' '.join(ref_text_words[:max_ref_words])
+            print(f"Truncated ref_text to {{max_ref_words}} words to match {{ref_audio_duration:.1f}}s audio", flush=True)
     else:
         raise ValueError(f"Unknown engine type: {{engine_type}}")
 
@@ -1140,8 +1151,7 @@ def validate_multi_speaker_voices(segments: list[tuple[str, str]]) -> None:
     if invalid_voices:
         valid_voices = get_all_valid_voices()
         raise ValueError(
-            f"Unknown voice(s): {', '.join(sorted(invalid_voices))}. "
-            f"Valid voices: {', '.join(sorted(valid_voices))}"
+            f"Unknown voice(s): {', '.join(sorted(invalid_voices))}. Valid voices: {', '.join(sorted(valid_voices))}"
         )
 
 
@@ -1220,7 +1230,7 @@ def synthesize_multi_speaker(
     print(f"Multi-speaker synthesis: {len(grouped)} speaker segments")
     for i, (voice, text) in enumerate(grouped):
         word_count = len(text.split())
-        print(f"  [{i+1}] {voice}: {word_count} words")
+        print(f"  [{i + 1}] {voice}: {word_count} words")
 
     # check memory before starting
     check_memory_safe("multi-speaker synthesis")
@@ -1230,7 +1240,7 @@ def synthesize_multi_speaker(
 
     try:
         for i, (voice, text) in enumerate(grouped):
-            print(f"\nProcessing segment {i+1}/{len(grouped)}: {voice}")
+            print(f"\nProcessing segment {i + 1}/{len(grouped)}: {voice}")
 
             # create temp file for this segment
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
@@ -1250,7 +1260,7 @@ def synthesize_multi_speaker(
                 enhance=enhance,
             )
 
-            print(f"Segment {i+1}/{len(grouped)} complete")
+            print(f"Segment {i + 1}/{len(grouped)} complete")
 
         # concatenate all segments
         print(f"\nConcatenating {len(segment_wavs)} segments...")
