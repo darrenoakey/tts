@@ -316,21 +316,18 @@ try:
                    capture_output=True, check=True)
             ref_data, _ = sf.read(resampled_path)
             resampled_path.unlink()
-        # CRITICAL: Limit reference audio and text to ~15 seconds
-        # Longer references cause the model to confuse ref_text with input text
-        # and output the training script instead of the requested dialogue
-        MAX_REF_SECONDS = 15
-        MAX_REF_WORDS = int(MAX_REF_SECONDS * 2.5)  # ~37 words at 150 WPM
+        # CRITICAL: Limit reference audio to ~10 seconds and DO NOT pass ref_text
+        # Passing ref_text causes the model to confuse it with input text and
+        # output the training script instead of the requested dialogue
+        MAX_REF_SECONDS = 10
 
         ref_audio_duration = len(ref_data) / model.sample_rate
         if ref_audio_duration > MAX_REF_SECONDS:
             ref_data = ref_data[:int(model.sample_rate * MAX_REF_SECONDS)]
             print(f"Truncated ref_audio from {{ref_audio_duration:.1f}}s to {{MAX_REF_SECONDS}}s", flush=True)
 
-        ref_text_words = ref_text.split()
-        if len(ref_text_words) > MAX_REF_WORDS:
-            ref_text = ' '.join(ref_text_words[:MAX_REF_WORDS])
-            print(f"Truncated ref_text from {{len(ref_text_words)}} to {{MAX_REF_WORDS}} words", flush=True)
+        # Clear ref_text - passing it causes content leakage into output
+        ref_text = None
 
         ref_audio_array = mx.array(ref_data.astype(np.float32))
     else:
