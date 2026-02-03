@@ -1,5 +1,20 @@
+import tempfile
+from pathlib import Path
+
 import pytest
-from src.tts_engine import get_engine, QwenTtsEngine, TtsEngine, QWEN_VOICES, DEFAULT_VOICE, split_into_chunks
+from src.tts_engine import (
+    get_engine,
+    QwenTtsEngine,
+    TtsEngine,
+    QWEN_VOICES,
+    DEFAULT_VOICE,
+    split_into_chunks,
+    is_valid_voice,
+    get_all_valid_voices,
+    parse_multi_speaker_jsonl,
+    validate_multi_speaker_voices,
+    group_consecutive_speakers,
+)
 
 
 # ##################################################################
@@ -138,6 +153,264 @@ def test_split_into_chunks_word_boundary():
     assert len(chunks) == 2
     assert chunks[0] == "This is a longer sentence with exactly ten words in it."  # 10 words
     assert chunks[1] == "Short five word sentence here."  # 5 words
+
+
+# ##################################################################
+# test is valid voice with built-in voices
+# verify all built-in qwen voices are recognized
+def test_is_valid_voice_builtin():
+    for voice in QWEN_VOICES:
+        assert is_valid_voice(voice) is True
+
+
+# ##################################################################
+# test is valid voice with invalid voice
+# verify unknown voices are rejected
+def test_is_valid_voice_invalid():
+    assert is_valid_voice("nonexistent_voice_xyz") is False
+    assert is_valid_voice("") is False
+    assert is_valid_voice("INVALID") is False
+
+
+# ##################################################################
+# test is valid voice case insensitive
+# verify voice matching is case insensitive for built-in voices
+def test_is_valid_voice_case_insensitive():
+    assert is_valid_voice("AIDEN") is True
+    assert is_valid_voice("Aiden") is True
+    assert is_valid_voice("aiden") is True
+
+
+# ##################################################################
+# test get all valid voices
+# verify returns both built-in and custom voices
+def test_get_all_valid_voices():
+    voices = get_all_valid_voices()
+    # should include all built-in voices
+    for v in QWEN_VOICES:
+        assert v in voices
+    # should be a non-empty list
+    assert len(voices) >= len(QWEN_VOICES)
+
+
+# ##################################################################
+# test parse multi speaker jsonl basic
+# verify parsing of valid jsonl input
+def test_parse_multi_speaker_jsonl_basic():
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+        f.write('{"aiden": "Hello there"}\n')
+        f.write('{"ryan": "Hi back"}\n')
+        f.write('{"aiden": "How are you?"}\n')
+        jsonl_path = Path(f.name)
+
+    try:
+        segments = parse_multi_speaker_jsonl(jsonl_path)
+        assert len(segments) == 3
+        assert segments[0] == ("aiden", "Hello there")
+        assert segments[1] == ("ryan", "Hi back")
+        assert segments[2] == ("aiden", "How are you?")
+    finally:
+        jsonl_path.unlink()
+
+
+# ##################################################################
+# test parse multi speaker jsonl skips empty lines
+# verify empty lines are ignored
+def test_parse_multi_speaker_jsonl_empty_lines():
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+        f.write('{"aiden": "Hello"}\n')
+        f.write("\n")
+        f.write('{"ryan": "World"}\n')
+        f.write("   \n")
+        jsonl_path = Path(f.name)
+
+    try:
+        segments = parse_multi_speaker_jsonl(jsonl_path)
+        assert len(segments) == 2
+    finally:
+        jsonl_path.unlink()
+
+
+# ##################################################################
+# test parse multi speaker jsonl invalid json
+# verify error on malformed json
+def test_parse_multi_speaker_jsonl_invalid_json():
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+        f.write('{"aiden": "Hello"}\n')
+        f.write("not valid json\n")
+        jsonl_path = Path(f.name)
+
+    try:
+        with pytest.raises(ValueError, match="Invalid JSON on line 2"):
+            parse_multi_speaker_jsonl(jsonl_path)
+    finally:
+        jsonl_path.unlink()
+
+
+# ##################################################################
+# test parse multi speaker jsonl wrong type
+# verify error when line is not object
+def test_parse_multi_speaker_jsonl_wrong_type():
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+        f.write('["array", "not", "object"]\n')
+        jsonl_path = Path(f.name)
+
+    try:
+        with pytest.raises(ValueError, match="must be a JSON object"):
+            parse_multi_speaker_jsonl(jsonl_path)
+    finally:
+        jsonl_path.unlink()
+
+
+# ##################################################################
+# test parse multi speaker jsonl multiple keys
+# verify error when object has multiple keys
+def test_parse_multi_speaker_jsonl_multiple_keys():
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+        f.write('{"aiden": "Hello", "ryan": "World"}\n')
+        jsonl_path = Path(f.name)
+
+    try:
+        with pytest.raises(ValueError, match="exactly one key"):
+            parse_multi_speaker_jsonl(jsonl_path)
+    finally:
+        jsonl_path.unlink()
+
+
+# ##################################################################
+# test parse multi speaker jsonl file not found
+# verify error when file doesn't exist
+def test_parse_multi_speaker_jsonl_not_found():
+    with pytest.raises(FileNotFoundError):
+        parse_multi_speaker_jsonl(Path("/nonexistent/path.jsonl"))
+
+
+# ##################################################################
+# test validate multi speaker voices valid
+# verify no error when all voices are valid
+def test_validate_multi_speaker_voices_valid():
+    segments = [("aiden", "Hello"), ("ryan", "World"), ("vivian", "Hi")]
+    # should not raise
+    validate_multi_speaker_voices(segments)
+
+
+# ##################################################################
+# test validate multi speaker voices invalid
+# verify error listing all invalid voices
+def test_validate_multi_speaker_voices_invalid():
+    segments = [
+        ("aiden", "Hello"),
+        ("fake_voice_1", "Text"),
+        ("ryan", "World"),
+        ("fake_voice_2", "More text"),
+    ]
+    with pytest.raises(ValueError) as exc_info:
+        validate_multi_speaker_voices(segments)
+
+    error_msg = str(exc_info.value)
+    assert "fake_voice_1" in error_msg
+    assert "fake_voice_2" in error_msg
+    assert "Unknown voice(s)" in error_msg
+
+
+# ##################################################################
+# test group consecutive speakers basic
+# verify consecutive same-speaker lines are merged
+def test_group_consecutive_speakers_basic():
+    segments = [
+        ("aiden", "Hello"),
+        ("aiden", "How are you?"),
+        ("ryan", "I'm fine"),
+        ("aiden", "Great!"),
+    ]
+    grouped = group_consecutive_speakers(segments)
+
+    assert len(grouped) == 3
+    assert grouped[0] == ("aiden", "Hello How are you?")
+    assert grouped[1] == ("ryan", "I'm fine")
+    assert grouped[2] == ("aiden", "Great!")
+
+
+# ##################################################################
+# test group consecutive speakers all same
+# verify all same-speaker lines become one segment
+def test_group_consecutive_speakers_all_same():
+    segments = [
+        ("aiden", "One"),
+        ("aiden", "Two"),
+        ("aiden", "Three"),
+        ("aiden", "Four"),
+        ("aiden", "Five"),
+    ]
+    grouped = group_consecutive_speakers(segments)
+
+    assert len(grouped) == 1
+    assert grouped[0] == ("aiden", "One Two Three Four Five")
+
+
+# ##################################################################
+# test group consecutive speakers alternating
+# verify alternating speakers are not merged
+def test_group_consecutive_speakers_alternating():
+    segments = [
+        ("aiden", "A"),
+        ("ryan", "B"),
+        ("aiden", "C"),
+        ("ryan", "D"),
+    ]
+    grouped = group_consecutive_speakers(segments)
+
+    assert len(grouped) == 4
+    assert grouped[0] == ("aiden", "A")
+    assert grouped[1] == ("ryan", "B")
+    assert grouped[2] == ("aiden", "C")
+    assert grouped[3] == ("ryan", "D")
+
+
+# ##################################################################
+# test group consecutive speakers empty
+# verify empty input returns empty output
+def test_group_consecutive_speakers_empty():
+    grouped = group_consecutive_speakers([])
+    assert grouped == []
+
+
+# ##################################################################
+# test group consecutive speakers case insensitive
+# verify voice name matching is case insensitive
+def test_group_consecutive_speakers_case_insensitive():
+    segments = [
+        ("Aiden", "Hello"),
+        ("AIDEN", "World"),
+        ("aiden", "Test"),
+    ]
+    grouped = group_consecutive_speakers(segments)
+
+    assert len(grouped) == 1
+    # preserves the case of the first occurrence
+    assert grouped[0][0] == "Aiden"
+    assert grouped[0][1] == "Hello World Test"
+
+
+# ##################################################################
+# test group consecutive speakers three voices
+# verify grouping works with 3+ different speakers
+def test_group_consecutive_speakers_three_voices():
+    segments = [
+        ("aiden", "I'm Aiden"),
+        ("aiden", "Nice to meet you"),
+        ("ryan", "I'm Ryan"),
+        ("vivian", "And I'm Vivian"),
+        ("vivian", "Hello everyone"),
+        ("aiden", "Welcome all"),
+    ]
+    grouped = group_consecutive_speakers(segments)
+
+    assert len(grouped) == 4
+    assert grouped[0] == ("aiden", "I'm Aiden Nice to meet you")
+    assert grouped[1] == ("ryan", "I'm Ryan")
+    assert grouped[2] == ("vivian", "And I'm Vivian Hello everyone")
+    assert grouped[3] == ("aiden", "Welcome all")
 
 
 # ##################################################################

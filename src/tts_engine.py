@@ -1058,6 +1058,236 @@ def get_engine(model: str = "qwen", voice: str = DEFAULT_VOICE, voice_descriptio
 
 
 # ##################################################################
+# voice validation
+# check if a voice name is valid (built-in or custom)
+def is_valid_voice(voice: str) -> bool:
+    """Check if a voice name is valid (built-in or registered custom voice)."""
+    # built-in voices
+    if voice.lower() in [v.lower() for v in QWEN_VOICES]:
+        return True
+    # custom registered voices
+    if get_voice_description(voice) is not None:
+        return True
+    # portable voice package
+    if voice.endswith(".zip") and Path(voice).exists():
+        return True
+    return False
+
+
+def get_all_valid_voices() -> list[str]:
+    """Return list of all valid voice names (built-in + custom)."""
+    voices = list(QWEN_VOICES)
+    voices.extend(list_custom_voices())
+    return voices
+
+
+# ##################################################################
+# multi-speaker TTS
+# parse JSONL input and synthesize with multiple voices
+def parse_multi_speaker_jsonl(jsonl_path: Path) -> list[tuple[str, str]]:
+    """
+    Parse a JSONL file with multi-speaker dialogue.
+    Each line should be a JSON object with exactly one key (voice name) and value (text).
+    Example: {"bob": "Hello there"}\n{"jane": "Well hello to you"}
+
+    Returns list of (voice, text) tuples.
+    """
+    jsonl_path = Path(jsonl_path)
+    if not jsonl_path.exists():
+        raise FileNotFoundError(f"JSONL file not found: {jsonl_path}")
+
+    lines = jsonl_path.read_text(encoding="utf-8").strip().split("\n")
+    result: list[tuple[str, str]] = []
+
+    for line_num, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line:
+            continue  # skip empty lines
+
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON on line {line_num}: {e}")
+
+        if not isinstance(obj, dict):
+            raise ValueError(f"Line {line_num} must be a JSON object, got {type(obj).__name__}")
+
+        if len(obj) != 1:
+            raise ValueError(f"Line {line_num} must have exactly one key (voice name), got {len(obj)}")
+
+        voice = list(obj.keys())[0]
+        text = obj[voice]
+
+        if not isinstance(text, str):
+            raise ValueError(f"Line {line_num}: text must be a string, got {type(text).__name__}")
+
+        if text.strip():
+            result.append((voice, text.strip()))
+
+    return result
+
+
+def validate_multi_speaker_voices(segments: list[tuple[str, str]]) -> None:
+    """
+    Validate that all voices in segments are valid.
+    Raises ValueError with clear message listing all invalid voices if any are found.
+    """
+    invalid_voices: set[str] = set()
+    for voice, _ in segments:
+        if not is_valid_voice(voice):
+            invalid_voices.add(voice)
+
+    if invalid_voices:
+        valid_voices = get_all_valid_voices()
+        raise ValueError(
+            f"Unknown voice(s): {', '.join(sorted(invalid_voices))}. "
+            f"Valid voices: {', '.join(sorted(valid_voices))}"
+        )
+
+
+def group_consecutive_speakers(segments: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """
+    Group consecutive segments with the same speaker.
+    Multiple consecutive {"bob": "text1"}, {"bob": "text2"} become one ("bob", "text1 text2").
+
+    Returns list of (voice, combined_text) tuples.
+    """
+    if not segments:
+        return []
+
+    grouped: list[tuple[str, str]] = []
+    current_voice, current_text = segments[0]
+
+    for voice, text in segments[1:]:
+        if voice.lower() == current_voice.lower():
+            # same speaker - append text
+            current_text = current_text + " " + text
+        else:
+            # different speaker - save current and start new
+            grouped.append((current_voice, current_text))
+            current_voice = voice
+            current_text = text
+
+    # don't forget the last group
+    grouped.append((current_voice, current_text))
+
+    return grouped
+
+
+def synthesize_multi_speaker(
+    jsonl_path: Path,
+    output_path: Path,
+    language: str = "English",
+    temperature: float = DEFAULT_TEMPERATURE,
+    speed: float = DEFAULT_SPEED,
+    enhance: bool = False,
+) -> Path:
+    """
+    Synthesize multi-speaker dialogue from a JSONL file.
+
+    Input format: JSONL with lines like {"bob": "Hello"}\n{"jane": "Hi there"}
+    Each line's key is the voice name, value is the text to speak.
+
+    Validates ALL voices upfront before starting synthesis.
+    Groups consecutive same-speaker lines for efficiency.
+    Generates each speaker segment separately and concatenates.
+
+    Args:
+        jsonl_path: Path to JSONL input file
+        output_path: Path for output audio file (wav or mp3)
+        language: Language for synthesis
+        temperature: Synthesis temperature
+        speed: Speed multiplier (applied at end)
+        enhance: Whether to enhance audio quality
+
+    Returns:
+        Path to output audio file
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # parse input
+    segments = parse_multi_speaker_jsonl(jsonl_path)
+    if not segments:
+        raise ValueError(f"No dialogue found in {jsonl_path}")
+
+    # validate ALL voices upfront (fail fast)
+    validate_multi_speaker_voices(segments)
+
+    # group consecutive same-speaker lines
+    grouped = group_consecutive_speakers(segments)
+
+    print(f"Multi-speaker synthesis: {len(grouped)} speaker segments")
+    for i, (voice, text) in enumerate(grouped):
+        word_count = len(text.split())
+        print(f"  [{i+1}] {voice}: {word_count} words")
+
+    # check memory before starting
+    check_memory_safe("multi-speaker synthesis")
+
+    # synthesize each segment
+    segment_wavs: list[Path] = []
+
+    try:
+        for i, (voice, text) in enumerate(grouped):
+            print(f"\nProcessing segment {i+1}/{len(grouped)}: {voice}")
+
+            # create temp file for this segment
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                segment_wav = Path(tmp.name)
+            segment_wavs.append(segment_wav)
+
+            # get engine for this voice
+            engine = get_engine(voice=voice)
+
+            # synthesize (engine handles chunking internally)
+            engine.synthesize(
+                text=text,
+                output_path=segment_wav,
+                language=language,
+                temperature=temperature,
+                speed=1.0,  # apply speed at the end for consistency
+                enhance=enhance,
+            )
+
+            print(f"Segment {i+1}/{len(grouped)} complete")
+
+        # concatenate all segments
+        print(f"\nConcatenating {len(segment_wavs)} segments...")
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            combined_wav = Path(tmp.name)
+        concatenate_wav_files(segment_wavs, combined_wav)
+
+        # convert to final format
+        if output_path.suffix.lower() == ".mp3":
+            convert_wav_to_mp3(combined_wav, output_path, normalize=True, speed=speed)
+            combined_wav.unlink()
+        else:
+            if speed != 1.0:
+                # for wav output with speed adjustment, need to process
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                    speed_adjusted = Path(tmp.name)
+                # use ffmpeg atempo for speed
+                cmd = ["ffmpeg", "-y", "-i", str(combined_wav), "-af", f"atempo={speed}", str(speed_adjusted)]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode != 0:
+                    raise RuntimeError(f"Speed adjustment failed: {result.stderr}")
+                shutil.move(str(speed_adjusted), str(output_path))
+                combined_wav.unlink()
+            else:
+                shutil.move(str(combined_wav), str(output_path))
+
+        print(f"\nMulti-speaker synthesis complete: {output_path}")
+        return output_path
+
+    finally:
+        # clean up segment temp files
+        for wav in segment_wavs:
+            if wav.exists():
+                wav.unlink()
+
+
+# ##################################################################
 # tts engine module
 # provides text-to-speech synthesis with pluggable model backends,
 # using mlx-audio for efficient inference on apple silicon

@@ -1,0 +1,6 @@
+{"aiden": "Hello everyone, I'm Aiden. Welcome to our demonstration."}
+{"ryan": "Hi there! I'm Ryan. Great to be here today."}
+{"vivian": "And I'm Vivian. Let's show you how multi-speaker synthesis works."}
+{"aiden": "Each of us has a distinct voice."}
+{"ryan": "The system automatically groups consecutive lines from the same speaker."}
+{"vivian": "And validates all voices before starting, so you won't get halfway through and have it fail."}

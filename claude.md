@@ -75,6 +75,33 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 - `script.txt` - 2-minute phonetically balanced text (~270 words) - use for voice design
 - `script16.txt` - 16-minute extended script (~720 words) - for maximum voice capture
 
+## Multi-Speaker TTS
+
+Generate dialogue with multiple voices from JSONL input.
+
+**Command**: `./run multi dialogue.jsonl -o output.mp3`
+
+**Input format**: JSONL with one JSON object per line, each with exactly one key (voice name) and value (text):
+```jsonl
+{"bob": "Hello there!"}
+{"jane": "Well hello to you too."}
+{"bob": "How are you today?"}
+{"jane": "Doing great, thanks for asking."}
+```
+
+**Features**:
+- **Fail-fast validation**: All voices are validated upfront before any synthesis begins
+- **Consecutive speaker grouping**: Multiple lines from same speaker are merged (e.g., 3 consecutive bob lines become one segment)
+- **Standard chunking**: Each speaker segment uses the same ~600 word chunking rules
+- **Sequential generation**: Speakers are processed one at a time (never parallel - GPU safety)
+
+**Options**:
+- `-o, --output`: Output file path (default: input.mp3)
+- `-l, --language`: Language (default: English)
+- `-t, --temperature`: Synthesis variability (default: 0.9)
+- `-s, --speed`: Speed multiplier 0.5-2.0 (default: 1.0)
+- `-e, --enhance`: Apply AI enhancement (ultra quality, slower)
+
 ## Models
 
 **CustomVoice** (preset voices): `mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16`

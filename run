@@ -364,6 +364,30 @@ print()
 
 
 # ##################################################################
+# command multi
+# run multi-speaker TTS from JSONL input
+def command_multi(args: argparse.Namespace) -> int:
+    _ensure_venv()
+    cmd = [str(VENV_PYTHON), "-m", "src.tts", "multi", str(args.input)]
+    if args.output:
+        cmd.extend(["-o", str(args.output)])
+    if args.language:
+        cmd.extend(["-l", args.language])
+    if args.temperature:
+        cmd.extend(["-t", str(args.temperature)])
+    if args.speed:
+        cmd.extend(["-s", str(args.speed)])
+    if args.enhance:
+        cmd.append("-e")
+
+    with open(LOCK_FILE, "w") as lock:
+        print("Waiting for TTS lock...", file=sys.stderr, flush=True)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        print("Lock acquired, starting multi-speaker TTS", file=sys.stderr, flush=True)
+        return _run_venv(cmd, env={"PYTHONPATH": str(PROJECT_ROOT)})
+
+
+# ##################################################################
 # command test
 # run pytest for a specific test target and log output
 def command_test(args: argparse.Namespace) -> int:
@@ -455,6 +479,15 @@ def main(argv: list[str]) -> int:
 
     p_celebs = sub.add_parser("list-celebs", help="List available celebrities from moviesoundclips.net")
     p_celebs.set_defaults(func=command_list_celebs)
+
+    p_multi = sub.add_parser("multi", help="Generate multi-speaker dialogue from JSONL")
+    p_multi.add_argument("input", type=Path, help="Input JSONL file with dialogue")
+    p_multi.add_argument("-o", "--output", type=Path, help="Output audio file")
+    p_multi.add_argument("-l", "--language", help="Language (default: English)")
+    p_multi.add_argument("-t", "--temperature", type=float, help="Temperature (default: 0.9)")
+    p_multi.add_argument("-s", "--speed", type=float, help="Speed multiplier 0.5-2.0 (default: 1.0)")
+    p_multi.add_argument("-e", "--enhance", action="store_true", help="Apply AI enhancement (ultra quality, slower)")
+    p_multi.set_defaults(func=command_multi)
 
     p_test = sub.add_parser("test", help="Run a single test target")
     p_test.add_argument("target", help="e.g. src/tts_engine_test.py::test_get_engine_returns_qwen_for_default")

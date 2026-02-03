@@ -17,8 +17,9 @@
   },
   "darren": {
     "type": "clone",
-    "ref_audio": "/Volumes/T9/darrenoakey/Downloads/voice script sample.wav",
-    "ref_text": "A birch canoe slid smoothly on the calm lake surface. A thick fog crept over the jagged mountain peaks at dawn. She held the heavy bronze jar with both hands, feeling its cool weight. The quick brown fox jumped lazily over the sleeping dog. Please call Stella and ask her about the weekly meeting schedule. The views from that church tower were breathtaking on a clear Thursday evening. A large size in stockings is hard to sell, but the right pitch makes all the difference. The boy was there when the sun rose brightly over the eastern hills. We will go to the zone where fresh water mixes with the salty ocean. Young children should avoid taking those strong medicines without guidance.",
+    "ref_audio": "/Volumes/T9/darrenoakey/src/tts/local/designed/gary/reference.wav",
+    "ref_text": "When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is a division of white light into many beautiful colors. The quick brown fox jumps lazily over the sleeping dog.",
+    "description": "A refined British male newsreader in his 40s with an impeccably controlled, authoritative voice. His pronunciation is crystal clear with perfect received pronunciation (RP) accent. Every syllable is precisely articulated with measured pacing. His tone is calm, confident, and professional - the epitome of BBC World Service broadcasting. Crisp consonants, neutral pitch, no vocal fry or uptalk. Speaks with gravitas and clarity.",
     "speed": 1.0
   },
   "gary": {
@@ -40,6 +41,27 @@
     "ref_audio": "/Volumes/T9/darrenoakey/src/tts/local/designed/gary/reference.wav",
     "ref_text": "When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is a division of white light into many beautiful colors. The quick brown fox jumps lazily over the sleeping dog.",
     "model_name": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16",
+    "speed": 1.0
+  },
+  "marcus": {
+    "type": "clone",
+    "ref_audio": "/Volumes/T9/darrenoakey/src/tts/local/designed/marcus/reference.wav",
+    "ref_text": "When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is a division of white light into many beautiful colors. These take the shape of a long round arch, with its path high above, and its two ends apparently beyond the horizon. You wished to know all about my grandfather. Well, he is nearly ninety-three years old. He dresses himself in an ancient black frock coat, usually minus several buttons; yet he still thinks as swiftly as ever. A long, flowing beard clings to his chin, giving those who observe him a pronounced feeling of the utmost respect. The birch canoe slid smoothly on the calm lake surface. A thick fog crept over the jagged mountain peaks at dawn. She held the heavy bronze jar with both hands, feeling its cool weight. The quick brown fox jumped lazily over the sleeping dog. How wonderful! The garden was absolutely magnificent this morning. Did you notice the butterflies dancing among the flowers? Wait, what was that noise? Perhaps it was just the wind rustling through the leaves. She sells seashells by the seashore. Peter Piper picked a peck of pickled peppers. The sixth sick sheik's sixth sheep is sick. Strength and strategy are essential for success. The weather whether we like it or not will change with the seasons. Through thick and thin, through trials and tribulations, we persevere. What we do today echoes through eternity, shaping tomorrow's world.",
+    "description": "A warm, polished American male radio announcer in his mid-50s. Smooth, confident baritone with natural broadcast cadence. Speaks with infectious enthusiasm and precise articulation. The kind of voice you would hear on NPR tech segments. Upbeat energy with professional radio delivery and practiced pacing.",
+    "speed": 1.0
+  },
+  "victor": {
+    "type": "clone",
+    "ref_audio": "/Volumes/T9/darrenoakey/src/tts/local/designed/victor/reference.wav",
+    "ref_text": "When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is a division of white light into many beautiful colors. These take the shape of a long round arch, with its path high above, and its two ends apparently beyond the horizon. You wished to know all about my grandfather. Well, he is nearly ninety-three years old. He dresses himself in an ancient black frock coat, usually minus several buttons; yet he still thinks as swiftly as ever. A long, flowing beard clings to his chin, giving those who observe him a pronounced feeling of the utmost respect. The birch canoe slid smoothly on the calm lake surface. A thick fog crept over the jagged mountain peaks at dawn. She held the heavy bronze jar with both hands, feeling its cool weight. The quick brown fox jumped lazily over the sleeping dog. How wonderful! The garden was absolutely magnificent this morning. Did you notice the butterflies dancing among the flowers? Wait, what was that noise? Perhaps it was just the wind rustling through the leaves. She sells seashells by the seashore. Peter Piper picked a peck of pickled peppers. The sixth sick sheik's sixth sheep is sick. Strength and strategy are essential for success. The weather whether we like it or not will change with the seasons. Through thick and thin, through trials and tribulations, we persevere. What we do today echoes through eternity, shaping tomorrow's world.",
+    "description": "A deep, resonant American male bass-baritone voice in his mid-50s. Speaks with deliberate pacing, choosing words carefully. Gravitas and authority like a PBS documentary narrator. Every sentence lands with considered precision. Thoughtful pauses between phrases. Warm but measured, with subtle Midwestern undertones.",
+    "speed": 1.0
+  },
+  "maya": {
+    "type": "clone",
+    "ref_audio": "/Volumes/T9/darrenoakey/src/tts/local/designed/maya/reference.wav",
+    "ref_text": "When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is a division of white light into many beautiful colors. These take the shape of a long round arch, with its path high above, and its two ends apparently beyond the horizon. You wished to know all about my grandfather. Well, he is nearly ninety-three years old. He dresses himself in an ancient black frock coat, usually minus several buttons; yet he still thinks as swiftly as ever. A long, flowing beard clings to his chin, giving those who observe him a pronounced feeling of the utmost respect. The birch canoe slid smoothly on the calm lake surface. A thick fog crept over the jagged mountain peaks at dawn. She held the heavy bronze jar with both hands, feeling its cool weight. The quick brown fox jumped lazily over the sleeping dog. How wonderful! The garden was absolutely magnificent this morning. Did you notice the butterflies dancing among the flowers? Wait, what was that noise? Perhaps it was just the wind rustling through the leaves. She sells seashells by the seashore. Peter Piper picked a peck of pickled peppers. The sixth sick sheik's sixth sheep is sick. Strength and strategy are essential for success. The weather whether we like it or not will change with the seasons. Through thick and thin, through trials and tribulations, we persevere. What we do today echoes through eternity, shaping tomorrow's world.",
+    "description": "A young American woman in her mid-20s with a clear, bright soprano voice. Crisp diction of broadcast journalism. Authoritative despite her youth. Speaks with conviction and energy. Professional yet passionate. The sound of someone who cares deeply and is not afraid to say so. Slightly faster pace than typical newscasters.",
     "speed": 1.0
   }
 }

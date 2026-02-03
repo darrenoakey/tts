@@ -6,7 +6,14 @@ from pathlib import Path
 import setproctitle
 from colorama import Fore, Style, init
 
-from src.tts_engine import QWEN_VOICES, DEFAULT_VOICE, DEFAULT_TEMPERATURE, DEFAULT_SPEED, list_custom_voices
+from src.tts_engine import (
+    QWEN_VOICES,
+    DEFAULT_VOICE,
+    DEFAULT_TEMPERATURE,
+    DEFAULT_SPEED,
+    list_custom_voices,
+    synthesize_multi_speaker,
+)
 
 init(autoreset=True)
 
@@ -95,6 +102,48 @@ def main(argv: list[str]) -> int:
     # list-voices command
     sub.add_parser("list-voices", help="List available voices")
 
+    # multi-speaker command
+    p_multi = sub.add_parser("multi", help="Generate multi-speaker dialogue from JSONL")
+    p_multi.add_argument(
+        "input",
+        type=Path,
+        help="Input JSONL file with dialogue lines like {\"bob\": \"hello\"}",
+    )
+    p_multi.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=None,
+        help="Output audio file (default: input.mp3)",
+    )
+    p_multi.add_argument(
+        "-l",
+        "--language",
+        type=str,
+        default="English",
+        help="Language for synthesis (default: English)",
+    )
+    p_multi.add_argument(
+        "-t",
+        "--temperature",
+        type=float,
+        default=DEFAULT_TEMPERATURE,
+        help=f"Temperature for synthesis variability (default: {DEFAULT_TEMPERATURE})",
+    )
+    p_multi.add_argument(
+        "-s",
+        "--speed",
+        type=float,
+        default=DEFAULT_SPEED,
+        help=f"Speed multiplier 0.5-2.0 (default: {DEFAULT_SPEED})",
+    )
+    p_multi.add_argument(
+        "-e",
+        "--enhance",
+        action="store_true",
+        help="Apply AI enhancement to output (ultra quality, slower)",
+    )
+
     args = parser.parse_args(argv)
 
     # default to generate if no subcommand but has positional args
@@ -180,6 +229,31 @@ def main(argv: list[str]) -> int:
                     enhance=args.enhance,
                 )
             print(f"{Fore.GREEN}✓{Style.RESET_ALL} Generated: {Fore.CYAN}{output_path}{Style.RESET_ALL}")
+            return 0
+        except FileNotFoundError as err:
+            print(f"{Fore.RED}✗ Error:{Style.RESET_ALL} {err}", file=sys.stderr)
+            return 1
+        except ValueError as err:
+            print(f"{Fore.RED}✗ Error:{Style.RESET_ALL} {err}", file=sys.stderr)
+            return 1
+        except Exception as err:
+            print(f"{Fore.RED}✗ Error:{Style.RESET_ALL} {err}", file=sys.stderr)
+            return 1
+
+    if args.command == "multi":
+        try:
+            input_path = Path(args.input)
+            output_path = args.output or input_path.with_suffix(".mp3")
+
+            result = synthesize_multi_speaker(
+                jsonl_path=input_path,
+                output_path=output_path,
+                language=args.language,
+                temperature=args.temperature,
+                speed=args.speed,
+                enhance=args.enhance,
+            )
+            print(f"{Fore.GREEN}✓{Style.RESET_ALL} Generated: {Fore.CYAN}{result}{Style.RESET_ALL}")
             return 0
         except FileNotFoundError as err:
             print(f"{Fore.RED}✗ Error:{Style.RESET_ALL} {err}", file=sys.stderr)
