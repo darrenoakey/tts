@@ -92,6 +92,7 @@ Generate dialogue with multiple voices from JSONL input.
 **Features**:
 - **Fail-fast validation**: All voices are validated upfront before any synthesis begins
 - **Consecutive speaker grouping**: Multiple lines from same speaker are merged (e.g., 3 consecutive bob lines become one segment)
+- **Automatic silence trimming**: Leading and trailing silence is removed from each segment for tight dialogue transitions
 - **Standard chunking**: Each speaker segment uses the same ~600 word chunking rules
 - **Sequential generation**: Speakers are processed one at a time (never parallel - GPU safety)
 
@@ -139,3 +140,4 @@ Generate dialogue with multiple voices from JSONL input.
 - **design-voice auto-retries** - on GPU crash, will automatically retry up to 10 times
 - **Memory auto-restart** - if subprocess exceeds 10GB RSS, it exits with code 77 and parent restarts from next chunk (up to 50 restarts)
 - **asyncio compatibility** - single subprocess for all chunks avoids SIGCHLD signal conflicts when called from asyncio apps (like autoblog)
+- **Multi-speaker silence trimming** - uses ffmpeg silenceremove filter (-50dB threshold, 0.1s min duration) to remove leading/trailing silence from each segment for tight dialogue

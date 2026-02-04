@@ -1,7 +1,9 @@
 import tempfile
 from pathlib import Path
 
+import numpy as np
 import pytest
+import soundfile as sf
 from src.tts_engine import (
     get_engine,
     QwenTtsEngine,
@@ -14,6 +16,8 @@ from src.tts_engine import (
     parse_multi_speaker_jsonl,
     validate_multi_speaker_voices,
     group_consecutive_speakers,
+    trim_silence,
+    concatenate_wav_files,
 )
 
 
@@ -411,6 +415,164 @@ def test_group_consecutive_speakers_three_voices():
     assert grouped[1] == ("ryan", "I'm Ryan")
     assert grouped[2] == ("vivian", "And I'm Vivian Hello everyone")
     assert grouped[3] == ("aiden", "Welcome all")
+
+
+# ##################################################################
+# test trim silence basic
+# verify silence trimming removes leading and trailing silence
+def test_trim_silence_basic():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+
+        # create a test audio file with leading silence, tone, trailing silence
+        sample_rate = 24000
+        leading_silence = np.zeros(int(sample_rate * 0.5))  # 0.5s silence
+        tone = 0.5 * np.sin(2 * np.pi * 440 * np.arange(int(sample_rate * 1.0)) / sample_rate)  # 1s tone
+        trailing_silence = np.zeros(int(sample_rate * 1.0))  # 1s silence
+        audio = np.concatenate([leading_silence, tone, trailing_silence]).astype(np.float32)
+
+        input_path = tmpdir / "input.wav"
+        sf.write(str(input_path), audio, sample_rate)
+
+        # original duration should be 2.5 seconds
+        original_duration = len(audio) / sample_rate
+        assert original_duration == 2.5
+
+        # trim silence
+        output_path = tmpdir / "output.wav"
+        trim_silence(input_path, output_path)
+
+        # read trimmed audio
+        trimmed_audio, _ = sf.read(str(output_path))
+        trimmed_duration = len(trimmed_audio) / sample_rate
+
+        # trimmed should be much shorter (approximately 1s for the tone)
+        assert trimmed_duration < 1.5  # should be close to 1s
+
+
+# ##################################################################
+# test trim silence in place
+# verify silence trimming can overwrite input file
+def test_trim_silence_in_place():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+
+        # create audio with trailing silence only
+        sample_rate = 24000
+        tone = 0.5 * np.sin(2 * np.pi * 440 * np.arange(int(sample_rate * 0.5)) / sample_rate)
+        silence = np.zeros(int(sample_rate * 2.0))  # 2s silence
+        audio = np.concatenate([tone, silence]).astype(np.float32)
+
+        input_path = tmpdir / "audio.wav"
+        sf.write(str(input_path), audio, sample_rate)
+
+        # trim in place (no output_path)
+        trim_silence(input_path)
+
+        # read result
+        trimmed_audio, _ = sf.read(str(input_path))
+        trimmed_duration = len(trimmed_audio) / sample_rate
+
+        # should be much shorter than original 2.5s
+        assert trimmed_duration < 1.0
+
+
+# ##################################################################
+# test concatenate wav files basic
+# verify multiple wav files are concatenated in order
+def test_concatenate_wav_files_basic():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+        sample_rate = 24000
+
+        # create two short audio files
+        tone1 = 0.5 * np.sin(2 * np.pi * 440 * np.arange(int(sample_rate * 0.2)) / sample_rate).astype(np.float32)
+        tone2 = 0.5 * np.sin(2 * np.pi * 880 * np.arange(int(sample_rate * 0.3)) / sample_rate).astype(np.float32)
+
+        path1 = tmpdir / "tone1.wav"
+        path2 = tmpdir / "tone2.wav"
+        sf.write(str(path1), tone1, sample_rate)
+        sf.write(str(path2), tone2, sample_rate)
+
+        # concatenate
+        output_path = tmpdir / "combined.wav"
+        concatenate_wav_files([path1, path2], output_path)
+
+        # read result
+        combined, sr = sf.read(str(output_path))
+        combined_duration = len(combined) / sr
+
+        # should be approximately 0.5s (0.2 + 0.3)
+        assert 0.45 < combined_duration < 0.55
+
+
+# ##################################################################
+# test concatenate wav files single file
+# verify single file is copied when only one input
+def test_concatenate_wav_files_single():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+        sample_rate = 24000
+
+        tone = 0.5 * np.sin(2 * np.pi * 440 * np.arange(int(sample_rate * 0.5)) / sample_rate).astype(np.float32)
+        input_path = tmpdir / "single.wav"
+        sf.write(str(input_path), tone, sample_rate)
+
+        output_path = tmpdir / "output.wav"
+        concatenate_wav_files([input_path], output_path)
+
+        # read result
+        output_audio, sr = sf.read(str(output_path))
+        output_duration = len(output_audio) / sr
+
+        assert 0.45 < output_duration < 0.55
+
+
+# ##################################################################
+# test concatenate wav files with trim
+# verify trim_trailing_silence option removes silence before concatenating
+def test_concatenate_wav_files_with_trim():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+        sample_rate = 24000
+
+        # create files with trailing silence
+        tone1 = 0.5 * np.sin(2 * np.pi * 440 * np.arange(int(sample_rate * 0.2)) / sample_rate).astype(np.float32)
+        silence1 = np.zeros(int(sample_rate * 1.0), dtype=np.float32)  # 1s silence
+        audio1 = np.concatenate([tone1, silence1])
+
+        tone2 = 0.5 * np.sin(2 * np.pi * 880 * np.arange(int(sample_rate * 0.2)) / sample_rate).astype(np.float32)
+        silence2 = np.zeros(int(sample_rate * 1.0), dtype=np.float32)  # 1s silence
+        audio2 = np.concatenate([tone2, silence2])
+
+        path1 = tmpdir / "tone1.wav"
+        path2 = tmpdir / "tone2.wav"
+        sf.write(str(path1), audio1, sample_rate)
+        sf.write(str(path2), audio2, sample_rate)
+
+        # concatenate without trimming
+        output_no_trim = tmpdir / "no_trim.wav"
+        concatenate_wav_files([path1, path2], output_no_trim, trim_trailing_silence=False)
+
+        # read back paths for trimming test (files were modified by above call)
+        sf.write(str(path1), audio1, sample_rate)
+        sf.write(str(path2), audio2, sample_rate)
+
+        # concatenate with trimming
+        output_trim = tmpdir / "with_trim.wav"
+        concatenate_wav_files([path1, path2], output_trim, trim_trailing_silence=True)
+
+        # compare durations
+        no_trim_audio, _ = sf.read(str(output_no_trim))
+        trim_audio, _ = sf.read(str(output_trim))
+
+        no_trim_duration = len(no_trim_audio) / sample_rate
+        trim_duration = len(trim_audio) / sample_rate
+
+        # without trim: 0.2 + 1.0 + 0.2 + 1.0 = 2.4s
+        # with trim: approximately 0.2 + 0.2 = 0.4s
+        assert no_trim_duration > 2.0
+        assert trim_duration < 1.0
 
 
 # ##################################################################

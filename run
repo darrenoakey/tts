@@ -379,6 +379,8 @@ def command_multi(args: argparse.Namespace) -> int:
         cmd.extend(["-s", str(args.speed)])
     if args.enhance:
         cmd.append("-e")
+    if args.work_dir:
+        cmd.extend(["-w", str(args.work_dir)])
 
     with open(LOCK_FILE, "w") as lock:
         print("Waiting for TTS lock...", file=sys.stderr, flush=True)
@@ -487,6 +489,7 @@ def main(argv: list[str]) -> int:
     p_multi.add_argument("-t", "--temperature", type=float, help="Temperature (default: 0.9)")
     p_multi.add_argument("-s", "--speed", type=float, help="Speed multiplier 0.5-2.0 (default: 1.0)")
     p_multi.add_argument("-e", "--enhance", action="store_true", help="Apply AI enhancement (ultra quality, slower)")
+    p_multi.add_argument("-w", "--work-dir", type=Path, help="Work directory for progress (enables resume)")
     p_multi.set_defaults(func=command_multi)
 
     p_test = sub.add_parser("test", help="Run a single test target")

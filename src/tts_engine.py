@@ -342,12 +342,18 @@ try:
 
         print(f"Processing chunk {{i+1}}/{{total}}...", flush=True)
 
+        # calculate max_tokens based on text length
+        # ~2.5 words/second at 12Hz = ~5 tokens/word, with 2x buffer
+        word_count = len(chunk_text.split())
+        max_tokens = max(200, word_count * 10)  # min 200, ~10 tokens per word
+
         if engine_type == "custom":
             results = list(model.generate_custom_voice(
                 text=chunk_text,
                 language=language,
                 speaker=voice,
                 temperature=temperature,
+                max_tokens=max_tokens,
             ))
         elif engine_type == "design":
             results = list(model.generate_voice_design(
@@ -355,6 +361,7 @@ try:
                 language=language,
                 instruct=voice_description,
                 temperature=temperature,
+                max_tokens=max_tokens,
             ))
         elif engine_type == "clone":
             results = list(model.generate(
@@ -363,6 +370,7 @@ try:
                 ref_text=ref_text,
                 lang_code=language.lower()[:2],
                 temperature=temperature,
+                max_tokens=max_tokens,
             ))
 
         if not results:
@@ -519,13 +527,79 @@ def synthesize_with_restart(
     return 1
 
 
-def concatenate_wav_files(wav_paths: list[Path], output_path: Path) -> Path:
+def trim_silence(wav_path: Path, output_path: Path | None = None, threshold_db: float = -50, min_silence_duration: float = 0.1) -> Path:
+    """
+    Trim leading and trailing silence from a WAV file using ffmpeg silenceremove filter.
+
+    Args:
+        wav_path: Input WAV file
+        output_path: Output path (defaults to overwriting input)
+        threshold_db: Volume threshold below which is considered silence (default -50dB)
+        min_silence_duration: Minimum duration of silence to remove (default 0.1s)
+
+    Returns:
+        Path to trimmed file
+    """
+    if output_path is None:
+        output_path = wav_path
+
+    # use temp file if overwriting
+    if output_path == wav_path:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            temp_path = Path(tmp.name)
+    else:
+        temp_path = output_path
+
+    # silenceremove filter: remove both leading and trailing silence
+    # start_periods=1 removes leading silence (stop after 1 period of non-silence)
+    # stop_periods=-1 removes all trailing silence
+    filter_str = (
+        f"silenceremove="
+        f"start_periods=1:start_duration={min_silence_duration}:start_threshold={threshold_db}dB:"
+        f"stop_periods=-1:stop_duration={min_silence_duration}:stop_threshold={threshold_db}dB"
+    )
+
+    cmd = ["ffmpeg", "-y", "-i", str(wav_path), "-af", filter_str, str(temp_path)]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        # if trimming fails, just keep original
+        if temp_path != output_path:
+            temp_path.unlink(missing_ok=True)
+        return wav_path
+
+    # if we used a temp file, move it to the original
+    if output_path == wav_path:
+        shutil.move(str(temp_path), str(output_path))
+
+    return output_path
+
+
+def concatenate_wav_files(wav_paths: list[Path], output_path: Path, trim_trailing_silence: bool = False) -> Path:
+    """
+    Concatenate multiple WAV files into one.
+
+    Args:
+        wav_paths: List of WAV files to concatenate
+        output_path: Output file path
+        trim_trailing_silence: If True, trim trailing silence from each file before concatenating
+
+    Returns:
+        Path to output file
+    """
     if len(wav_paths) == 1:
         # just copy the single file
-        import shutil
-
-        shutil.copy(wav_paths[0], output_path)
+        if trim_trailing_silence:
+            shutil.copy(wav_paths[0], output_path)
+            trim_silence(output_path)
+        else:
+            shutil.copy(wav_paths[0], output_path)
         return output_path
+
+    # optionally trim silence from each file first
+    if trim_trailing_silence:
+        for wav_path in wav_paths:
+            trim_silence(wav_path)
 
     # create concat list file for ffmpeg
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
@@ -1193,6 +1267,7 @@ def synthesize_multi_speaker(
     temperature: float = DEFAULT_TEMPERATURE,
     speed: float = DEFAULT_SPEED,
     enhance: bool = False,
+    work_dir: Path | None = None,
 ) -> Path:
     """
     Synthesize multi-speaker dialogue from a JSONL file.
@@ -1200,9 +1275,16 @@ def synthesize_multi_speaker(
     Input format: JSONL with lines like {"bob": "Hello"}\n{"jane": "Hi there"}
     Each line's key is the voice name, value is the text to speak.
 
-    Validates ALL voices upfront before starting synthesis.
-    Groups consecutive same-speaker lines for efficiency.
-    Generates each speaker segment separately and concatenates.
+    OPTIMIZATION: Batches all lines by speaker to minimize model loads.
+    Instead of loading/unloading voices for each dialogue turn, we:
+    1. Group ALL lines by speaker (not just consecutive ones)
+    2. For each speaker, load the model ONCE and generate ALL their lines
+    3. Reassemble in original dialogue order at the end
+
+    This reduces model loads from O(n) to O(speakers), typically 143 → 4.
+
+    RESUMABILITY: If work_dir is provided, saves progress there and can resume.
+    Each line is saved as line_{index:04d}.wav. On restart, existing files are skipped.
 
     Args:
         jsonl_path: Path to JSONL input file
@@ -1211,14 +1293,17 @@ def synthesize_multi_speaker(
         temperature: Synthesis temperature
         speed: Speed multiplier (applied at end)
         enhance: Whether to enhance audio quality
+        work_dir: Optional directory for progress tracking (enables resume)
 
     Returns:
         Path to output audio file
     """
+    import time
+
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # parse input
+    # parse input - get (voice, text) tuples with their original indices
     segments = parse_multi_speaker_jsonl(jsonl_path)
     if not segments:
         raise ValueError(f"No dialogue found in {jsonl_path}")
@@ -1226,49 +1311,150 @@ def synthesize_multi_speaker(
     # validate ALL voices upfront (fail fast)
     validate_multi_speaker_voices(segments)
 
-    # group consecutive same-speaker lines
-    grouped = group_consecutive_speakers(segments)
+    # create indexed segments: [(index, voice, text), ...]
+    indexed_segments = [(i, voice, text) for i, (voice, text) in enumerate(segments)]
+    total_lines = len(indexed_segments)
 
-    print(f"Multi-speaker synthesis: {len(grouped)} speaker segments")
-    for i, (voice, text) in enumerate(grouped):
-        word_count = len(text.split())
-        print(f"  [{i + 1}] {voice}: {word_count} words")
+    # group by speaker: {voice: [(index, text), ...]}
+    speaker_batches: dict[str, list[tuple[int, str]]] = {}
+    for idx, voice, text in indexed_segments:
+        voice_lower = voice.lower()
+        if voice_lower not in speaker_batches:
+            speaker_batches[voice_lower] = []
+        speaker_batches[voice_lower].append((idx, text))
+
+    print(f"\n{'=' * 60}")
+    print(f"Multi-speaker synthesis: {total_lines} lines, {len(speaker_batches)} speakers")
+    print("Speaker batching enabled (optimized: one model load per speaker)")
+    for voice, lines in speaker_batches.items():
+        word_count = sum(len(text.split()) for _, text in lines)
+        print(f"  {voice}: {len(lines)} lines, {word_count} words")
+    print(f"{'=' * 60}\n")
+
+    # set up work directory for progress tracking
+    if work_dir:
+        work_dir = Path(work_dir)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        resuming = True
+    else:
+        work_dir = Path(tempfile.mkdtemp(prefix="multi_speaker_"))
+        resuming = False
+
+    if resuming:
+        print(f"Work directory: {work_dir}")
+        existing = sum(1 for i in range(total_lines) if (work_dir / f"line_{i:04d}.wav").exists())
+        if existing > 0:
+            print(f"Resuming: {existing}/{total_lines} lines already complete")
 
     # check memory before starting
     check_memory_safe("multi-speaker synthesis")
 
-    # synthesize each segment
-    segment_wavs: list[Path] = []
+    total_start = time.time()
 
     try:
-        for i, (voice, text) in enumerate(grouped):
-            print(f"\nProcessing segment {i + 1}/{len(grouped)}: {voice}")
+        # process each speaker batch (one model load per speaker)
+        for speaker_num, (voice, lines) in enumerate(speaker_batches.items(), 1):
+            # check which lines for this speaker still need generation
+            pending_lines = [(idx, text) for idx, text in lines
+                            if not (work_dir / f"line_{idx:04d}.wav").exists()]
 
-            # create temp file for this segment
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                segment_wav = Path(tmp.name)
-            segment_wavs.append(segment_wav)
+            if not pending_lines:
+                print(f"\n[Speaker {speaker_num}/{len(speaker_batches)}] {voice}: all {len(lines)} lines complete, skipping")
+                continue
 
-            # get engine for this voice
-            engine = get_engine(voice=voice)
+            print(f"\n[Speaker {speaker_num}/{len(speaker_batches)}] {voice}: generating {len(pending_lines)}/{len(lines)} lines")
 
-            # synthesize (engine handles chunking internally)
-            engine.synthesize(
-                text=text,
-                output_path=segment_wav,
+            # get voice config
+            voice_config = get_voice_description(voice)
+            if not voice_config:
+                raise ValueError(f"Voice config not found: {voice}")
+
+            # split long lines into chunks (<600 words each for efficiency)
+            # track: [(line_idx, chunk_idx, text, output_path), ...]
+            all_chunks: list[tuple[int, int, str, str]] = []
+            for idx, text in pending_lines:
+                chunks = split_into_chunks(text)
+                if len(chunks) == 1:
+                    # single chunk - output directly to line wav
+                    all_chunks.append((idx, 0, chunks[0], str(work_dir / f"line_{idx:04d}.wav")))
+                else:
+                    # multiple chunks - use chunk wavs, concatenate later
+                    for chunk_idx, chunk_text in enumerate(chunks):
+                        chunk_path = str(work_dir / f"line_{idx:04d}_chunk_{chunk_idx:02d}.wav")
+                        all_chunks.append((idx, chunk_idx, chunk_text, chunk_path))
+
+            # prepare synthesis inputs
+            texts = [text for _, _, text, _ in all_chunks]
+            output_wavs = [path for _, _, _, path in all_chunks]
+
+            # synthesize all chunks for this speaker in one subprocess batch
+            # the subprocess loads the model ONCE and processes all chunks
+            speaker_start = time.time()
+
+            rc = synthesize_with_restart(
+                engine_type="clone",
+                chunks=texts,
+                output_wavs=output_wavs,
                 language=language,
                 temperature=temperature,
-                speed=1.0,  # apply speed at the end for consistency
-                enhance=enhance,
+                ref_audio=voice_config.get("ref_audio", ""),
+                ref_text=voice_config.get("ref_text", ""),
+                model_name=voice_config.get("model_name"),
             )
 
-            print(f"Segment {i + 1}/{len(grouped)} complete")
+            if rc != 0:
+                # check how many actually completed
+                completed = sum(1 for path in output_wavs if Path(path).exists())
+                print(f"Warning: synthesis returned {rc}, {completed}/{len(all_chunks)} chunks completed")
+                if completed == 0:
+                    raise RuntimeError(f"Synthesis failed for speaker {voice} (exit code {rc})")
 
-        # concatenate all segments
-        print(f"\nConcatenating {len(segment_wavs)} segments...")
+            # concatenate multi-chunk lines into single line wavs
+            lines_with_chunks: dict[int, list[tuple[int, str]]] = {}
+            for line_idx, chunk_idx, _, path in all_chunks:
+                if line_idx not in lines_with_chunks:
+                    lines_with_chunks[line_idx] = []
+                lines_with_chunks[line_idx].append((chunk_idx, path))
+
+            for line_idx, chunk_info in lines_with_chunks.items():
+                if len(chunk_info) > 1:
+                    # sort by chunk index and concatenate
+                    chunk_info.sort(key=lambda x: x[0])
+                    chunk_paths = [Path(p) for _, p in chunk_info]
+                    # verify all chunks exist
+                    if all(p.exists() for p in chunk_paths):
+                        line_wav = work_dir / f"line_{line_idx:04d}.wav"
+                        concatenate_wav_files(chunk_paths, line_wav)
+                        # clean up chunk files
+                        for p in chunk_paths:
+                            p.unlink()
+
+            speaker_elapsed = time.time() - speaker_start
+            completed_count = sum(1 for idx, _ in pending_lines if (work_dir / f"line_{idx:04d}.wav").exists())
+            print(f"[Speaker {speaker_num}/{len(speaker_batches)}] {voice}: {completed_count} lines in {speaker_elapsed:.1f}s")
+
+        # verify all lines exist
+        missing = [i for i in range(total_lines) if not (work_dir / f"line_{i:04d}.wav").exists()]
+        if missing:
+            raise RuntimeError(f"Missing {len(missing)} lines after synthesis: {missing[:10]}...")
+
+        # concatenate in original dialogue order
+        # trim trailing silence from each line for tight dialogue
+        print(f"\nTrimming silence and concatenating {total_lines} lines in dialogue order...")
+        line_wavs = [work_dir / f"line_{i:04d}.wav" for i in range(total_lines)]
+
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             combined_wav = Path(tmp.name)
-        concatenate_wav_files(segment_wavs, combined_wav)
+        concatenate_wav_files(line_wavs, combined_wav, trim_trailing_silence=True)
+
+        # enhance if requested (on combined audio)
+        if enhance:
+            print("Enhancing combined audio...")
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                enhanced_wav = Path(tmp.name)
+            enhance_output(combined_wav, enhanced_wav)
+            combined_wav.unlink()
+            combined_wav = enhanced_wav
 
         # convert to final format
         if output_path.suffix.lower() == ".mp3":
@@ -1276,10 +1462,8 @@ def synthesize_multi_speaker(
             combined_wav.unlink()
         else:
             if speed != 1.0:
-                # for wav output with speed adjustment, need to process
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                     speed_adjusted = Path(tmp.name)
-                # use ffmpeg atempo for speed
                 cmd = ["ffmpeg", "-y", "-i", str(combined_wav), "-af", f"atempo={speed}", str(speed_adjusted)]
                 result = subprocess.run(cmd, capture_output=True, text=True)
                 if result.returncode != 0:
@@ -1289,14 +1473,27 @@ def synthesize_multi_speaker(
             else:
                 shutil.move(str(combined_wav), str(output_path))
 
-        print(f"\nMulti-speaker synthesis complete: {output_path}")
+        total_elapsed = time.time() - total_start
+        print(f"\n{'=' * 60}")
+        print("Multi-speaker synthesis complete!")
+        print(f"  Total time: {total_elapsed:.1f}s ({total_elapsed / 60:.1f} min)")
+        print(f"  Lines: {total_lines}")
+        print(f"  Speakers: {len(speaker_batches)}")
+        print(f"  Output: {output_path}")
+        print(f"{'=' * 60}\n")
+
+        # clean up work directory on success (unless user provided it)
+        if not resuming:
+            shutil.rmtree(work_dir, ignore_errors=True)
+
         return output_path
 
-    finally:
-        # clean up segment temp files
-        for wav in segment_wavs:
-            if wav.exists():
-                wav.unlink()
+    except Exception as e:
+        print(f"\n{'=' * 60}")
+        print(f"ERROR: {e}")
+        print(f"Work directory preserved for resume: {work_dir}")
+        print(f"{'=' * 60}\n")
+        raise
 
 
 # ##################################################################

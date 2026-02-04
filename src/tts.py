@@ -143,6 +143,13 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="Apply AI enhancement to output (ultra quality, slower)",
     )
+    p_multi.add_argument(
+        "-w",
+        "--work-dir",
+        type=Path,
+        default=None,
+        help="Work directory for progress tracking (enables resume on restart)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -252,6 +259,7 @@ def main(argv: list[str]) -> int:
                 temperature=args.temperature,
                 speed=args.speed,
                 enhance=args.enhance,
+                work_dir=args.work_dir,
             )
             print(f"{Fore.GREEN}✓{Style.RESET_ALL} Generated: {Fore.CYAN}{result}{Style.RESET_ALL}")
             return 0
