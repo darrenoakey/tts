@@ -30,7 +30,7 @@ DEFAULT_SPEED = 1.0
 DEFAULT_CHUNK_WORDS = 600
 
 # voice registry location
-VOICE_REGISTRY_PATH = Path(__file__).parent.parent / "voices.json"
+VOICE_REGISTRY_PATH = Path(__file__).parent / "voices.json"
 
 
 # ##################################################################
@@ -1364,8 +1364,18 @@ def synthesize_multi_speaker(
 
             print(f"\n[Speaker {speaker_num}/{len(speaker_batches)}] {voice}: generating {len(pending_lines)}/{len(lines)} lines")
 
-            # get voice config
+            # get voice config (registry or voice.zip)
             voice_config = get_voice_description(voice)
+            if not voice_config and voice.endswith(".zip") and Path(voice).exists():
+                import zipfile
+                extract_dir = Path(tempfile.mkdtemp(prefix="voice_pkg_"))
+                with zipfile.ZipFile(voice, "r") as zf:
+                    zf.extractall(extract_dir)
+                voice_config = {
+                    "type": "clone",
+                    "ref_audio": str(extract_dir / "voice.wav"),
+                    "ref_text": (extract_dir / "voice.txt").read_text().strip(),
+                }
             if not voice_config:
                 raise ValueError(f"Voice config not found: {voice}")
 

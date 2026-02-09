@@ -88,7 +88,7 @@ def command_design_voice(args: argparse.Namespace) -> int:
     _ensure_venv()
 
     # read the script that will be used for voice generation
-    script_path = PROJECT_ROOT / "script.txt"
+    script_path = PROJECT_ROOT / "src" / "script.txt"
     if not script_path.exists():
         print(f"Error: Script file not found: {script_path}")
         return 1
@@ -189,7 +189,7 @@ def command_export_voice(args: argparse.Namespace) -> int:
     _ensure_venv()
 
     # read the short script for voice generation
-    script_path = PROJECT_ROOT / "script_30.txt"
+    script_path = PROJECT_ROOT / "src" / "script_30.txt"
     if not script_path.exists():
         print(f"Error: Script file not found: {script_path}")
         return 1

@@ -16,7 +16,7 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 - `src/voice_scraper.py` - Scrape voice samples from moviesoundclips.net
 - `src/audio_quality.py` - Audio quality analysis, noise reduction, reference preparation
 - `src/tts.py` - CLI entry point
-- `voices.json` - Custom voice registry
+- `src/voices.json` - Custom voice registry
 - `run` - Project runner with venv management
 
 ## Architecture
@@ -36,7 +36,7 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 - English: aiden, ryan, ono_anna, sohee
 - Chinese: vivian, serena, uncle_fu, dylan (beijing dialect), eric (sichuan dialect)
 
-**Custom voices** stored in `voices.json`:
+**Custom voices** stored in `src/voices.json`:
 - Description-based: Uses VoiceDesign model with text description of desired voice
 - Clone-based: Uses Base model with ref_audio + ref_text for voice cloning
 
@@ -65,15 +65,15 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 **Portable voice packages**:
 - `./run export-voice narrator "A warm narrator..." -q hq` - Creates `narrator.voice.zip`
 - Contains `voice.wav` (reference audio) and `voice.txt` (reference text)
-- Uses `script_30.txt` (~30 seconds) for faster generation
+- Uses `src/script_30.txt` (~30 seconds) for faster generation
 - Quality options: `default` (fastest), `hq` (default), `ultra` (slowest)
 - Use with: `./run tts "Hello" -v ./narrator.voice.zip`
 - Voices are self-contained - no global registration needed
 
-**Voice training scripts**:
-- `script_30.txt` - 30-second script (~45 words) - quick voice tests
-- `script.txt` - 2-minute phonetically balanced text (~270 words) - use for voice design
-- `script16.txt` - 16-minute extended script (~720 words) - for maximum voice capture
+**Voice training scripts** (in `src/`):
+- `src/script_30.txt` - 30-second script (~45 words) - quick voice tests
+- `src/script.txt` - 2-minute phonetically balanced text (~270 words) - use for voice design
+- `src/script16.txt` - 16-minute extended script (~720 words) - for maximum voice capture
 
 ## Multi-Speaker TTS
 
@@ -122,7 +122,6 @@ Generate dialogue with multiple voices from JSONL input.
 ## Gotchas
 
 - Model downloads ~5GB on first run (cached in `~/.cache/huggingface/`)
-- Memory monitoring script (`run_with_memory_monitor.sh`) useful for debugging OOM issues
 - **Sample rate is 24kHz** (not 12kHz - the "12Hz" in model name is token rate)
 - **MP3 output uses maximum quality** (qscale:a 0, ~245 kbps VBR)
 - Audio normalization uses ffmpeg `loudnorm` and `alimiter` filters to prevent clipping
