@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-import fcntl
 import os
 import subprocess
 import sys
@@ -11,7 +10,6 @@ VENV = PROJECT_ROOT / ".venv"
 VENV_PYTHON = VENV / "bin" / "python"
 VENV_PIP = VENV / "bin" / "pip"
 TEST_OUT = PROJECT_ROOT / "output" / "testing"
-LOCK_FILE = PROJECT_ROOT / ".tts.lock"
 
 
 # ##################################################################
@@ -51,39 +49,74 @@ def command_install(_: argparse.Namespace) -> int:
 
 # ##################################################################
 # command tts
-# run the tts tool to convert text to speech
-# uses file lock to ensure only one instance runs at a time
+# convert text to speech via arbiter (GPU server)
 def command_tts(args: argparse.Namespace) -> int:
     _ensure_venv()
-    cmd = [str(VENV_PYTHON), "-m", "src.tts", "generate", str(args.input)]
-    if args.output:
-        cmd.extend(["-o", str(args.output)])
-    if args.model:
-        cmd.extend(["-m", args.model])
-    if args.voice:
-        cmd.extend(["-v", args.voice])
-    if args.language:
-        cmd.extend(["-l", args.language])
-    if args.temperature:
-        cmd.extend(["-t", str(args.temperature)])
-    if args.speed:
-        cmd.extend(["-s", str(args.speed)])
-    if args.voice_description:
-        cmd.extend(["-d", args.voice_description])
-    if args.enhance:
-        cmd.append("-e")
+    cmd = [str(VENV_PYTHON), "-c", """
+import sys
+from pathlib import Path
+from colorama import Fore, Style, init
+init(autoreset=True)
 
-    with open(LOCK_FILE, "w") as lock:
-        print("Waiting for TTS lock...", file=sys.stderr, flush=True)
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        print("Lock acquired, starting TTS", file=sys.stderr, flush=True)
-        return _run_venv(cmd, env={"PYTHONPATH": str(PROJECT_ROOT)})
+from src.arbiter_engine import get_arbiter_engine
+from src.tts_engine import get_voice_description, DEFAULT_SPEED
+
+input_arg = sys.argv[1]
+output = sys.argv[2] if sys.argv[2] != "None" else None
+voice = sys.argv[3]
+language = sys.argv[4]
+temperature = float(sys.argv[5])
+speed = float(sys.argv[6]) if sys.argv[6] != "None" else None
+voice_description = sys.argv[7] if sys.argv[7] != "None" else None
+enhance = sys.argv[8] == "True"
+
+# read input text
+input_path = Path(input_arg)
+if input_path.exists():
+    text = input_path.read_text(encoding="utf-8").strip()
+    if not output:
+        output = str(input_path.with_suffix(".mp3"))
+else:
+    text = input_arg
+    if not output:
+        output = "output.mp3"
+
+if not text:
+    print(f"{Fore.RED}Error: empty input{Style.RESET_ALL}", file=sys.stderr)
+    sys.exit(1)
+
+# resolve speed from voice registry
+if speed is None:
+    custom = get_voice_description(voice)
+    speed = custom.get("speed", DEFAULT_SPEED) if custom else DEFAULT_SPEED
+
+engine = get_arbiter_engine(voice=voice, voice_description=voice_description)
+result = engine.synthesize(
+    text=text,
+    output_path=Path(output),
+    language=language,
+    temperature=temperature,
+    speed=speed,
+    enhance=enhance,
+)
+print(f"{Fore.GREEN}✓{Style.RESET_ALL} Generated: {Fore.CYAN}{result}{Style.RESET_ALL}")
+""",
+        str(args.input),
+        str(args.output) if args.output else "None",
+        args.voice or "aiden",
+        args.language or "English",
+        str(args.temperature) if args.temperature else "0.9",
+        str(args.speed) if args.speed else "None",
+        args.voice_description if args.voice_description else "None",
+        str(args.enhance),
+    ]
+    return _run_venv(cmd, env={"PYTHONPATH": str(PROJECT_ROOT)})
 
 
 # ##################################################################
 # command design voice
-# create a voice from a text description by generating a template audio
-# then registering it as a clone voice for faster future synthesis
+# create a voice from a text description via arbiter
+# then register it as a clone voice for faster future synthesis
 def command_design_voice(args: argparse.Namespace) -> int:
     _ensure_venv()
 
@@ -104,35 +137,29 @@ def command_design_voice(args: argparse.Namespace) -> int:
     voice_dir = PROJECT_ROOT / "local" / "designed" / args.name
     ref_audio = voice_dir / "reference.wav"
 
-    # work directory for chunks (persistent for resume)
-    work_dir = voice_dir / "chunks"
-
     code = f'''
 import json
 from pathlib import Path
 from colorama import Fore, Style, init
 init(autoreset=True)
 
-from src.tts_engine import VoiceDesignEngine, VOICE_REGISTRY_PATH
+from src.arbiter_engine import ArbiterTtsEngine
+from src.tts_engine import VOICE_REGISTRY_PATH
 
 voice_dir = Path("{voice_dir}")
 voice_dir.mkdir(parents=True, exist_ok=True)
 ref_audio = Path("{ref_audio}")
-work_dir = Path("{work_dir}")
 
-# generate audio from script using VoiceDesign model
-print(f"{{Fore.BLUE}}🎙️  Generating voice template with VoiceDesign model...{{Style.RESET_ALL}}")
+# generate audio from script using VoiceDesign via arbiter
+print(f"{{Fore.BLUE}}Generating voice template via arbiter (VoiceDesign)...{{Style.RESET_ALL}}")
 print(f"{{Fore.WHITE}}   Description: {{Style.DIM}}{args.description[:60]}...{{Style.RESET_ALL}}")
-print(f"{{Fore.WHITE}}   Work dir: {{Style.DIM}}{{work_dir}}{{Style.RESET_ALL}}")
-print(f"{{Fore.WHITE}}   This will take a while (1.7B model, ~5 min of audio){{Style.RESET_ALL}}")
 print()
 
-engine = VoiceDesignEngine(voice_description="""{args.description}""")
+engine = ArbiterTtsEngine(voice_description="""{args.description}""")
 engine.synthesize(
     text="""{script_text}""",
     output_path=ref_audio,
     enhance={"True" if args.enhance else "False"},
-    work_dir=work_dir,
 )
 
 print(f"\\n{{Fore.GREEN}}✓{{Style.RESET_ALL}} Generated reference audio: {{Fore.CYAN}}{{ref_audio}}{{Style.RESET_ALL}}")
@@ -142,7 +169,6 @@ registry = {{}}
 if VOICE_REGISTRY_PATH.exists():
     registry = json.loads(VOICE_REGISTRY_PATH.read_text())
 
-# store the original description too for reference
 registry["{args.name}"] = {{
     "type": "clone",
     "ref_audio": str(ref_audio),
@@ -156,35 +182,12 @@ print(f"\\n{{Fore.GREEN}}✓{{Style.RESET_ALL}} Registered voice '{{Fore.CYAN}}{
 print(f"{{Fore.WHITE}}Use with:{{Style.RESET_ALL}} {{Fore.CYAN}}./run tts \\"hello world\\" -v {args.name}{{Style.RESET_ALL}}\\n")
 '''
 
-    max_retries = 10
-    for attempt in range(max_retries):
-        with open(LOCK_FILE, "w") as lock:
-            print("Waiting for TTS lock...", file=sys.stderr, flush=True)
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            print(f"Lock acquired, starting voice design (attempt {attempt + 1}/{max_retries})", file=sys.stderr, flush=True)
-            rc = _run_venv([str(VENV_PYTHON), "-c", code], env={"PYTHONPATH": str(PROJECT_ROOT)})
-            if rc == 0:
-                return 0
-            # check if it was a GPU crash (exit code is usually non-zero)
-            print(f"\n⚠️  Process exited with code {rc}, checking if resumable...", file=sys.stderr, flush=True)
-            # check if any chunks were created (progress was made)
-            chunks_dir = voice_dir / "chunks"
-            if chunks_dir.exists() and any(chunks_dir.iterdir()):
-                print(f"✓ Found chunks in {chunks_dir}, will retry and resume", file=sys.stderr, flush=True)
-                import time
-                time.sleep(2)  # brief pause before retry
-                continue
-            else:
-                print(f"✗ No progress made, not retrying", file=sys.stderr, flush=True)
-                return rc
-    print(f"✗ Max retries ({max_retries}) exceeded", file=sys.stderr, flush=True)
-    return 1
+    return _run_venv([str(VENV_PYTHON), "-c", code], env={"PYTHONPATH": str(PROJECT_ROOT)})
 
 
 # ##################################################################
 # command export voice
-# create a portable voice package (zip file) from a text description
-# uses shorter script_30.txt for faster generation
+# create a portable voice package (zip file) from a text description via arbiter
 def command_export_voice(args: argparse.Namespace) -> int:
     _ensure_venv()
 
@@ -204,38 +207,29 @@ def command_export_voice(args: argparse.Namespace) -> int:
     # output paths
     output_dir = Path(args.output).resolve() if args.output else Path.cwd()
     output_zip = output_dir / f"{args.name}.voice.zip"
-    work_dir = PROJECT_ROOT / "local" / "export" / args.name
-
-    # map quality argument
-    quality = args.quality
 
     code = f'''
 import zipfile
-import tempfile
 from pathlib import Path
 from colorama import Fore, Style, init
 init(autoreset=True)
 
-from src.tts_engine import VoiceDesignEngine
+from src.arbiter_engine import ArbiterTtsEngine
 
-work_dir = Path("{work_dir}")
-work_dir.mkdir(parents=True, exist_ok=True)
-
-# generate audio from script using VoiceDesign model
-print(f"{{Fore.BLUE}}🎙️  Generating voice template with VoiceDesign model...{{Style.RESET_ALL}}")
+# generate audio from script using VoiceDesign via arbiter
+print(f"{{Fore.BLUE}}Generating voice template via arbiter (VoiceDesign)...{{Style.RESET_ALL}}")
 print(f"{{Fore.WHITE}}   Description: {{Style.DIM}}{args.description[:60]}...{{Style.RESET_ALL}}")
-print(f"{{Fore.WHITE}}   Quality: {{Style.DIM}}{quality}{{Style.RESET_ALL}}")
-print(f"{{Fore.WHITE}}   Work dir: {{Style.DIM}}{{work_dir}}{{Style.RESET_ALL}}")
 print()
 
+import tempfile
+work_dir = Path(tempfile.mkdtemp(prefix="export_"))
 ref_audio = work_dir / "voice.wav"
-engine = VoiceDesignEngine(voice_description="""{args.description}""")
+
+engine = ArbiterTtsEngine(voice_description="""{args.description}""")
 engine.synthesize(
     text="""{script_text}""",
     output_path=ref_audio,
     enhance=True,
-    enhance_quality="{quality}",
-    work_dir=work_dir / "chunks",
 )
 
 print(f"\\n{{Fore.GREEN}}✓{{Style.RESET_ALL}} Generated reference audio: {{Fore.CYAN}}{{ref_audio}}{{Style.RESET_ALL}}")
@@ -248,33 +242,14 @@ with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
     zf.write(ref_audio, "voice.wav")
     zf.writestr("voice.txt", """{script_text}""")
 
+import shutil
+shutil.rmtree(work_dir, ignore_errors=True)
+
 print(f"\\n{{Fore.GREEN}}✓{{Style.RESET_ALL}} Created voice package: {{Fore.CYAN}}{{output_zip}}{{Style.RESET_ALL}}")
 print(f"{{Fore.WHITE}}Use with:{{Style.RESET_ALL}} {{Fore.CYAN}}./run tts \\"hello world\\" -v {{output_zip}}{{Style.RESET_ALL}}\\n")
 '''
 
-    max_retries = 10
-    for attempt in range(max_retries):
-        with open(LOCK_FILE, "w") as lock:
-            print("Waiting for TTS lock...", file=sys.stderr, flush=True)
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            print(f"Lock acquired, starting voice export (attempt {attempt + 1}/{max_retries})", file=sys.stderr, flush=True)
-            rc = _run_venv([str(VENV_PYTHON), "-c", code], env={"PYTHONPATH": str(PROJECT_ROOT)})
-            if rc == 0:
-                return 0
-            # check if it was a GPU crash (exit code is usually non-zero)
-            print(f"\n⚠️  Process exited with code {rc}, checking if resumable...", file=sys.stderr, flush=True)
-            # check if any chunks were created (progress was made)
-            chunks_dir = work_dir / "chunks"
-            if chunks_dir.exists() and any(chunks_dir.iterdir()):
-                print(f"✓ Found chunks in {chunks_dir}, will retry and resume", file=sys.stderr, flush=True)
-                import time
-                time.sleep(2)  # brief pause before retry
-                continue
-            else:
-                print(f"✗ No progress made, not retrying", file=sys.stderr, flush=True)
-                return rc
-    print(f"✗ Max retries ({max_retries}) exceeded", file=sys.stderr, flush=True)
-    return 1
+    return _run_venv([str(VENV_PYTHON), "-c", code], env={"PYTHONPATH": str(PROJECT_ROOT)})
 
 
 # ##################################################################
@@ -316,7 +291,7 @@ from colorama import Fore, Style, init
 init(autoreset=True)
 
 # transcribe the audio
-print(f"{{Fore.BLUE}}📝 Transcribing audio with Whisper...{{Style.RESET_ALL}}")
+print(f"{{Fore.BLUE}}Transcribing audio with Whisper...{{Style.RESET_ALL}}")
 import mlx_whisper
 result = mlx_whisper.transcribe(
     "{audio_path}",
@@ -365,28 +340,44 @@ print()
 
 # ##################################################################
 # command multi
-# run multi-speaker TTS from JSONL input
+# multi-speaker TTS from JSONL input via arbiter
 def command_multi(args: argparse.Namespace) -> int:
     _ensure_venv()
-    cmd = [str(VENV_PYTHON), "-m", "src.tts", "multi", str(args.input)]
-    if args.output:
-        cmd.extend(["-o", str(args.output)])
-    if args.language:
-        cmd.extend(["-l", args.language])
-    if args.temperature:
-        cmd.extend(["-t", str(args.temperature)])
-    if args.speed:
-        cmd.extend(["-s", str(args.speed)])
-    if args.enhance:
-        cmd.append("-e")
-    if args.work_dir:
-        cmd.extend(["-w", str(args.work_dir)])
+    cmd = [str(VENV_PYTHON), "-c", """
+import sys
+from pathlib import Path
+from colorama import Fore, Style, init
+init(autoreset=True)
 
-    with open(LOCK_FILE, "w") as lock:
-        print("Waiting for TTS lock...", file=sys.stderr, flush=True)
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        print("Lock acquired, starting multi-speaker TTS", file=sys.stderr, flush=True)
-        return _run_venv(cmd, env={"PYTHONPATH": str(PROJECT_ROOT)})
+from src.arbiter_engine import synthesize_multi_speaker_arbiter
+
+input_path = Path(sys.argv[1])
+output = sys.argv[2] if sys.argv[2] != "None" else None
+language = sys.argv[3]
+temperature = float(sys.argv[4])
+speed = float(sys.argv[5])
+enhance = sys.argv[6] == "True"
+
+output_path = Path(output) if output else input_path.with_suffix(".mp3")
+
+result = synthesize_multi_speaker_arbiter(
+    jsonl_path=input_path,
+    output_path=output_path,
+    language=language,
+    temperature=temperature,
+    speed=speed,
+    enhance=enhance,
+)
+print(f"{Fore.GREEN}✓{Style.RESET_ALL} Generated: {Fore.CYAN}{result}{Style.RESET_ALL}")
+""",
+        str(args.input),
+        str(args.output) if args.output else "None",
+        args.language or "English",
+        str(args.temperature) if args.temperature else "0.9",
+        str(args.speed) if args.speed else "1.0",
+        str(args.enhance),
+    ]
+    return _run_venv(cmd, env={"PYTHONPATH": str(PROJECT_ROOT)})
 
 
 # ##################################################################
@@ -435,10 +426,9 @@ def main(argv: list[str]) -> int:
     p_install = sub.add_parser("install", help="Install dependencies into venv")
     p_install.set_defaults(func=command_install)
 
-    p_tts = sub.add_parser("tts", help="Convert text file to speech")
-    p_tts.add_argument("input", type=Path, help="Input text file")
+    p_tts = sub.add_parser("tts", help="Convert text to speech")
+    p_tts.add_argument("input", type=str, help="Input text file or inline text")
     p_tts.add_argument("-o", "--output", type=Path, help="Output audio file")
-    p_tts.add_argument("-m", "--model", help="TTS model (default: qwen)")
     p_tts.add_argument("-v", "--voice", help="Voice name (built-in or custom)")
     p_tts.add_argument("-l", "--language", help="Language (default: English)")
     p_tts.add_argument("-t", "--temperature", type=float, help="Temperature (default: 0.9)")
@@ -489,7 +479,6 @@ def main(argv: list[str]) -> int:
     p_multi.add_argument("-t", "--temperature", type=float, help="Temperature (default: 0.9)")
     p_multi.add_argument("-s", "--speed", type=float, help="Speed multiplier 0.5-2.0 (default: 1.0)")
     p_multi.add_argument("-e", "--enhance", action="store_true", help="Apply AI enhancement (ultra quality, slower)")
-    p_multi.add_argument("-w", "--work-dir", type=Path, help="Work directory for progress (enables resume)")
     p_multi.set_defaults(func=command_multi)
 
     p_test = sub.add_parser("test", help="Run a single test target")
