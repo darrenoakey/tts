@@ -1,6 +1,6 @@
 # TTS Project
 
-Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
+Text-to-speech using Qwen3-TTS models via arbiter (NVIDIA CUDA on spark).
 
 ## Quick Start
 
@@ -12,23 +12,25 @@ Text-to-speech using Qwen3-TTS models via mlx-audio for Apple Silicon.
 
 ## Key Files
 
-- `src/tts_engine.py` - Engine abstraction with QwenTtsEngine, VoiceDesignEngine, VoiceCloneEngine
+- `src/arbiter_engine.py` - **Default engine**: delegates TTS to arbiter HTTP API on spark
+- `src/tts_engine.py` - Engine abstraction, chunking, audio processing (shared utilities)
+- `src/spark_engine.py` - Direct SSH/SCP engine (library code, not default)
+- `src/spark_worker.py` - Worker script that runs on spark for direct SSH mode
 - `src/voice_scraper.py` - Scrape voice samples from moviesoundclips.net
 - `src/audio_quality.py` - Audio quality analysis, noise reduction, reference preparation
-- `src/tts.py` - CLI entry point
+- `src/tts.py` - CLI entry point (list-voices only; tts/multi routed via run)
 - `src/voices.json` - Custom voice registry
 - `run` - Project runner with venv management
 
 ## Architecture
 
-- **MLX backend**: Uses mlx-audio for efficient Apple Silicon inference
-- **Chunked processing**: Long texts split into ~600 word chunks (at sentence boundaries) to prevent memory spikes and avoid 1.7B model degradation
-- **Subprocess isolation**: Model runs in isolated subprocess, exits cleanly when done
-  - QwenTtsEngine/VoiceCloneEngine: ONE subprocess for ALL chunks (avoids asyncio SIGCHLD conflicts with autoblog)
-  - VoiceDesignEngine: one subprocess per chunk (supports resumability via work_dir)
-- **Memory monitoring**: Subprocess tracks RSS via `resource.getrusage()`. If exceeds 10GB, exits with code 77 and parent restarts from next chunk
-- **Memory safety checks**: Before starting, available system memory is checked. If below 1.5GB threshold, synthesis aborts with clear error
-- **File locking**: Only one TTS instance runs at a time (uses `.tts.lock`)
+- **Arbiter backend (default)**: All TTS commands route through the arbiter HTTP API on spark (10.0.0.254:8400)
+- **PyTorch + CUDA**: Arbiter uses `qwen-tts` (official PyTorch package) with `Qwen/Qwen3-TTS-*` models on NVIDIA GB10
+- **Parallel chunk submission**: All chunks submitted to arbiter queue at once, then polled until complete — eliminates per-chunk round-trip latency
+- **Arbiter queuing**: Arbiter serializes jobs per model; no local file locking needed
+- **Chunked processing**: Long texts split into ~600 word chunks (at sentence boundaries) — model degrades beyond this even on CUDA
+- **Local MLX fallback**: `src/tts_engine.py` still contains full local MLX engines if needed
+- **Local post-processing**: MP3 conversion, normalization, speed adjustment, and enhancement all happen locally via ffmpeg
 
 ## Voices
 
@@ -105,38 +107,30 @@ Generate dialogue with multiple voices from JSONL input.
 
 ## Models
 
-**CustomVoice** (preset voices): `mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16`
+Models served by arbiter on spark (PyTorch, CUDA):
 
-**VoiceDesign** (designed voices): `mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16`
+**CustomVoice** (preset voices): `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice`
+**VoiceDesign** (designed voices): `Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign`
+**Voice Cloning** (Base model): `Qwen/Qwen3-TTS-12Hz-1.7B-Base`
 
-**Voice Cloning** (Base models):
-- 0.6B: `mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16` (faster)
-- 1.7B: `mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16` (same speed up to ~500 words, degrades beyond that, **default**)
-- All models use bf16 (bfloat16) - full precision, NOT quantized
+Local MLX equivalents (in tts_engine.py, not default):
+- `mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16`
+- `mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16`
+- `mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16` / `0.6B-Base-bf16`
 
-**Model performance** (benchmarked with gary voice):
-- Both models: ~1.1-1.3 seconds per word up to 512 words
-- 1.7B degrades to 2.24 s/word at 1024 words (1.76x slower than 0.6B)
-- Chunking at 600 words keeps both models in optimal range
+**Chunking at 600 words is mandatory** — model crashes at ~750 words even on CUDA with 128GB
 
 ## Gotchas
 
-- Model downloads ~5GB on first run (cached in `~/.cache/huggingface/`)
+- **Arbiter must be running** on spark (10.0.0.254:8400) — managed by `~/bin/auto` on spark
 - **Sample rate is 24kHz** (not 12kHz - the "12Hz" in model name is token rate)
 - **MP3 output uses maximum quality** (qscale:a 0, ~245 kbps VBR)
 - Audio normalization uses ffmpeg `loudnorm` and `alimiter` filters to prevent clipping
 - Temperature parameter (`-t`) controls synthesis variability (default 0.9)
 - **SSML not supported** - Qwen3-TTS uses natural language instructions for prosody, not XML tags
-- Reference audio is auto-resampled from any format to 24kHz mono (cached after first use)
-- Stereo recordings are automatically converted to mono for voice cloning
+- **600-word chunk limit is model-inherent** — tested: 748 words crashes the model even on CUDA with 128GB
+- Voice cloning ref_audio is SCP'd to `/tmp/arbiter-inbox/` on spark for efficiency
 - Voice scraping uses **ultra quality enhancement by default** (nfe=128, slowest but best)
-- **VoiceDesign 1.7B is very slow** - expect ~1 hour per 3-sentence chunk with enhancement
-- **Chunk-level enhancement** - enhancement runs per-chunk (faster than enhancing combined file)
-- **Temp file cleanup** - if TTS is killed mid-process, orphan wav files remain in /var/folders; clean manually if needed
 - **Enhancement output is 44.1kHz** - resemble-enhance upsamples from 24kHz to 44.1kHz
-- **NEVER run multiple models in parallel** - causes GPU crashes (Metal command buffer errors). Always run one model at a time, sequentially
-- **design-voice is resumable** - if it crashes, just run again and it will skip completed chunks
-- **design-voice auto-retries** - on GPU crash, will automatically retry up to 10 times
-- **Memory auto-restart** - if subprocess exceeds 10GB RSS, it exits with code 77 and parent restarts from next chunk (up to 50 restarts)
-- **asyncio compatibility** - single subprocess for all chunks avoids SIGCHLD signal conflicts when called from asyncio apps (like autoblog)
 - **Multi-speaker silence trimming** - uses ffmpeg silenceremove filter (-50dB threshold, 0.1s min duration) to remove leading/trailing silence from each segment for tight dialogue
+- **Arbiter serializes per model** — submitting 10 chunks queues them all; no local locking needed
