@@ -165,9 +165,24 @@ def command_tts(args: argparse.Namespace) -> int:
             except (ValueError, TypeError):
                 pass
 
-            if age_seconds < 30 * 60:
+            # check if the producer process is still alive
+            owner_pid = existing.get("pid")
+            producer_alive = False
+            if owner_pid:
+                try:
+                    os.kill(owner_pid, 0)  # signal 0 = existence check
+                    producer_alive = True
+                except (OSError, TypeError):
+                    pass
+
+            if not producer_alive:
                 print(
-                    f"TTS job already in progress for {output_path} (started by {existing_caller}), waiting...",
+                    f"TTS producer (pid {owner_pid}) is dead for {output_path}, starting fresh",
+                    file=sys.stderr,
+                )
+            elif age_seconds < 30 * 60:
+                print(
+                    f"TTS job already in progress for {output_path} (started by {existing_caller}, pid {owner_pid}), waiting...",
                     file=sys.stderr,
                 )
                 deadline = time.time() + (30 * 60 - age_seconds)
@@ -177,10 +192,18 @@ def command_tts(args: argparse.Namespace) -> int:
                     if current and current.get("status") == "done" and Path(output_path).exists():
                         print(f"TTS job completed while waiting: {output_path}", file=sys.stderr)
                         return 0
-                print(
-                    f"TTS job wait timed out for {output_path}, starting fresh",
-                    file=sys.stderr,
-                )
+                    # re-check if producer is still alive
+                    if owner_pid:
+                        try:
+                            os.kill(owner_pid, 0)
+                        except OSError:
+                            print(f"TTS producer (pid {owner_pid}) died, starting fresh", file=sys.stderr)
+                            break
+                else:
+                    print(
+                        f"TTS job wait timed out for {output_path}, starting fresh",
+                        file=sys.stderr,
+                    )
             else:
                 print(
                     f"TTS job status is stale for {output_path} (age {age_seconds:.0f}s), starting fresh",
@@ -193,6 +216,7 @@ def command_tts(args: argparse.Namespace) -> int:
         "output_path": output_path,
         "caller": caller,
         "voice": voice,
+        "pid": os.getpid(),
         "started_at": datetime.now(timezone.utc).isoformat(),
     })
 
