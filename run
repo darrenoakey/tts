@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 import argparse
+import json
 import os
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.resolve()
@@ -48,10 +51,151 @@ def command_install(_: argparse.Namespace) -> int:
 
 
 # ##################################################################
+# _job_id
+# 16-char sha256 hex digest of the output path — stable dedup key
+def _job_id(output_path: str) -> str:
+    import hashlib
+    return hashlib.sha256(output_path.encode()).hexdigest()[:16]
+
+
+# ##################################################################
+# _jobs_dir
+# returns the local/jobs directory, creating it if needed
+def _jobs_dir() -> Path:
+    d = PROJECT_ROOT / "local" / "jobs"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+# ##################################################################
+# _read_status
+# load a job status dict from disk; returns None if missing or corrupt
+def _read_status(job_id: str) -> dict | None:
+    f = _jobs_dir() / f"{job_id}.json"
+    if not f.exists():
+        return None
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+# ##################################################################
+# _write_status
+# atomically persist a status dict via tmp+rename
+def _write_status(job_id: str, data: dict) -> None:
+    d = _jobs_dir()
+    tmp = d / f"{job_id}.json.tmp"
+    final = d / f"{job_id}.json"
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    os.rename(str(tmp), str(final))
+
+
+# ##################################################################
+# _prune_jobs
+# delete done job files whose completed_at is older than 24 hours
+def _prune_jobs() -> None:
+    d = _jobs_dir()
+    cutoff = time.time() - 24 * 3600
+    for f in d.iterdir():
+        if f.suffix != ".json":
+            continue
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if data.get("status") != "done":
+            continue
+        completed_at = data.get("completed_at")
+        if not completed_at:
+            continue
+        try:
+            ts = datetime.fromisoformat(completed_at).timestamp()
+        except (ValueError, TypeError):
+            continue
+        if ts < cutoff:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
+
+# ##################################################################
 # command tts
-# convert text to speech via arbiter (GPU server)
+# convert text to speech via arbiter (GPU server) with job deduplication
 def command_tts(args: argparse.Namespace) -> int:
     _ensure_venv()
+
+    caller = args.caller
+    voice = args.voice or "aiden"
+    output_path = str(args.output.resolve()) if args.output else None
+
+    # resolve output path early so we can compute the dedup key
+    # (if --output is absent we derive it from input, matching inline script logic)
+    if output_path is None:
+        input_path = Path(str(args.input))
+        if input_path.exists():
+            output_path = str(input_path.with_suffix(".mp3").resolve())
+        else:
+            output_path = str(Path("output.mp3").resolve())
+
+    print(f"TTS request from {caller}: {output_path} voice={voice}", file=sys.stderr)
+
+    jid = _job_id(output_path)
+    existing = _read_status(jid)
+
+    if existing:
+        status = existing.get("status")
+        existing_caller = existing.get("caller", "unknown")
+        started_at_str = existing.get("started_at", "")
+
+        if status == "done" and Path(output_path).exists():
+            print(
+                f"TTS job already completed for {output_path} (by {existing_caller}), returning cached",
+                file=sys.stderr,
+            )
+            return 0
+
+        if status == "running":
+            # check age — stale if > 30 minutes
+            age_seconds = 0.0
+            try:
+                started_ts = datetime.fromisoformat(started_at_str).timestamp()
+                age_seconds = time.time() - started_ts
+            except (ValueError, TypeError):
+                pass
+
+            if age_seconds < 30 * 60:
+                print(
+                    f"TTS job already in progress for {output_path} (started by {existing_caller}), waiting...",
+                    file=sys.stderr,
+                )
+                deadline = time.time() + (30 * 60 - age_seconds)
+                while time.time() < deadline:
+                    time.sleep(5)
+                    current = _read_status(jid)
+                    if current and current.get("status") == "done" and Path(output_path).exists():
+                        print(f"TTS job completed while waiting: {output_path}", file=sys.stderr)
+                        return 0
+                print(
+                    f"TTS job wait timed out for {output_path}, starting fresh",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"TTS job status is stale for {output_path} (age {age_seconds:.0f}s), starting fresh",
+                    file=sys.stderr,
+                )
+
+    # write running status before synthesis starts
+    _write_status(jid, {
+        "status": "running",
+        "output_path": output_path,
+        "caller": caller,
+        "voice": voice,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    })
+
     cmd = [str(VENV_PYTHON), "-c", """
 import sys
 from pathlib import Path
@@ -69,6 +213,7 @@ temperature = float(sys.argv[5])
 speed = float(sys.argv[6]) if sys.argv[6] != "None" else None
 voice_description = sys.argv[7] if sys.argv[7] != "None" else None
 enhance = sys.argv[8] == "True"
+caller = sys.argv[9]
 
 # read input text
 input_path = Path(input_arg)
@@ -102,15 +247,34 @@ result = engine.synthesize(
 print(f"{Fore.GREEN}✓{Style.RESET_ALL} Generated: {Fore.CYAN}{result}{Style.RESET_ALL}")
 """,
         str(args.input),
-        str(args.output) if args.output else "None",
-        args.voice or "aiden",
+        output_path,
+        voice,
         args.language or "English",
         str(args.temperature) if args.temperature else "0.9",
         str(args.speed) if args.speed else "None",
         args.voice_description if args.voice_description else "None",
         str(args.enhance),
+        caller,
     ]
-    return _run_venv(cmd, env={"PYTHONPATH": str(PROJECT_ROOT)})
+    rc = _run_venv(cmd, env={"PYTHONPATH": str(PROJECT_ROOT)})
+
+    if rc == 0:
+        # mark done and prune stale completed jobs
+        now = datetime.now(timezone.utc).isoformat()
+        _write_status(jid, {
+            "status": "done",
+            "output_path": output_path,
+            "caller": caller,
+            "voice": voice,
+            "started_at": existing.get("started_at", now) if existing else now,
+            "completed_at": now,
+        })
+        _prune_jobs()
+    else:
+        # leave as running so a retry knows it failed — will be treated as stale after 30min
+        pass
+
+    return rc
 
 
 # ##################################################################
@@ -435,6 +599,7 @@ def main(argv: list[str]) -> int:
     p_tts.add_argument("-s", "--speed", type=float, help="Speed multiplier 0.5-2.0 (default: 1.0)")
     p_tts.add_argument("-d", "--voice-description", help="Voice description for on-the-fly voice design")
     p_tts.add_argument("-e", "--enhance", action="store_true", help="Apply AI enhancement (ultra quality, slower)")
+    p_tts.add_argument("-c", "--caller", required=True, help="Caller identifier for deduplication (e.g. state-flow/blog)")
     p_tts.set_defaults(func=command_tts)
 
     p_design = sub.add_parser("design-voice", help="Create voice from description (generates template, saves as clone)")
