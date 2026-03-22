@@ -1,4 +1,5 @@
 """SparkTtsEngine - delegates TTS synthesis to spark (NVIDIA CUDA) via SSH/SCP."""
+
 import json
 import shutil
 import subprocess
@@ -58,13 +59,9 @@ def check_spark_reachable() -> None:
             timeout=SSH_CONNECT_TIMEOUT + 5,
         )
         if result.returncode != 0:
-            raise SparkUnreachableError(
-                f"Spark is not reachable at {SPARK_HOST}: {result.stderr.strip()}"
-            )
+            raise SparkUnreachableError(f"Spark is not reachable at {SPARK_HOST}: {result.stderr.strip()}")
     except subprocess.TimeoutExpired:
-        raise SparkUnreachableError(
-            f"Spark connection timed out after {SSH_CONNECT_TIMEOUT}s — is spark running?"
-        )
+        raise SparkUnreachableError(f"Spark connection timed out after {SSH_CONNECT_TIMEOUT}s — is spark running?")
 
 
 # map mlx model names to pytorch model names
@@ -116,9 +113,7 @@ def _ssh_stream(cmd: str, timeout: int = SSH_SYNTHESIS_TIMEOUT) -> tuple[int, st
             timeout=timeout,
         )
     except subprocess.TimeoutExpired:
-        raise SparkError(
-            f"Spark synthesis timed out after {timeout}s — spark may be overloaded or hung"
-        )
+        raise SparkError(f"Spark synthesis timed out after {timeout}s — spark may be overloaded or hung")
     return result.returncode, result.stderr
 
 
@@ -126,8 +121,7 @@ def _scp_to_spark(local_path: str, remote_path: str) -> None:
     """Copy a file to spark with timeout."""
     try:
         result = subprocess.run(
-            ["scp", "-q", "-o", f"ConnectTimeout={SSH_CONNECT_TIMEOUT}",
-             local_path, f"{SPARK_HOST}:{remote_path}"],
+            ["scp", "-q", "-o", f"ConnectTimeout={SSH_CONNECT_TIMEOUT}", local_path, f"{SPARK_HOST}:{remote_path}"],
             capture_output=True,
             text=True,
             timeout=SCP_TIMEOUT,
@@ -158,17 +152,13 @@ def _run_spark_worker(config_path: str, batch: bool = False) -> None:
         print("Spark TTS is busy — queued, waiting for lock...", flush=True)
 
     # flock FILE COMMAND [ARGS] — acquires lock, runs command, releases on exit
-    flock_cmd = (
-        f"flock {SPARK_LOCK_FILE}"
-        f" {SPARK_VENV_PYTHON} {SPARK_WORKER} {config_path}{batch_flag}"
-    )
+    flock_cmd = f"flock {SPARK_LOCK_FILE} {SPARK_VENV_PYTHON} {SPARK_WORKER} {config_path}{batch_flag}"
 
     # long timeout — could be queued behind other jobs (1 hour max wait+run)
     rc, stderr = _ssh_stream(flock_cmd, timeout=3600)
     if rc != 0:
         raise SparkWorkerError(
-            f"Spark worker failed (exit code {rc})"
-            + (f"\n{stderr.strip()}" if stderr.strip() else "")
+            f"Spark worker failed (exit code {rc})" + (f"\n{stderr.strip()}" if stderr.strip() else "")
         )
 
 
@@ -176,8 +166,7 @@ def _scp_from_spark(remote_path: str, local_path: str) -> None:
     """Copy a file from spark with timeout."""
     try:
         result = subprocess.run(
-            ["scp", "-q", "-o", f"ConnectTimeout={SSH_CONNECT_TIMEOUT}",
-             f"{SPARK_HOST}:{remote_path}", local_path],
+            ["scp", "-q", "-o", f"ConnectTimeout={SSH_CONNECT_TIMEOUT}", f"{SPARK_HOST}:{remote_path}", local_path],
             capture_output=True,
             text=True,
             timeout=SCP_TIMEOUT,
@@ -215,8 +204,7 @@ def ensure_spark_setup() -> None:
     # install PyTorch with CUDA (critical: must use CUDA index)
     print("  Installing PyTorch with CUDA...")
     _ssh(
-        f"{SPARK_TTS_DIR}/.venv/bin/pip install -q "
-        f"torch torchaudio --index-url https://download.pytorch.org/whl/cu130"
+        f"{SPARK_TTS_DIR}/.venv/bin/pip install -q torch torchaudio --index-url https://download.pytorch.org/whl/cu130"
     )
 
     # install qwen-tts and dependencies

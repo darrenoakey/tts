@@ -4,6 +4,7 @@ Submits all chunks/lines at once to the arbiter queue, then polls until all comp
 The arbiter processes them sequentially per model but this avoids round-trip latency
 between chunks.
 """
+
 import base64
 import json
 import shutil
@@ -122,8 +123,7 @@ def _scp_to_inbox(local_path: str) -> str:
     filename = f"{int(time.time())}_{Path(local_path).name}"
     remote_path = f"{SPARK_INBOX}/{filename}"
     result = subprocess.run(
-        ["scp", "-q", "-o", "ConnectTimeout=10", local_path,
-         f"{SPARK_USER}@{SPARK_HOST}:{remote_path}"],
+        ["scp", "-q", "-o", "ConnectTimeout=10", local_path, f"{SPARK_USER}@{SPARK_HOST}:{remote_path}"],
         capture_output=True,
         text=True,
         timeout=120,

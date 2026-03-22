@@ -527,7 +527,9 @@ def synthesize_with_restart(
     return 1
 
 
-def trim_silence(wav_path: Path, output_path: Path | None = None, threshold_db: float = -50, min_silence_duration: float = 0.1) -> Path:
+def trim_silence(
+    wav_path: Path, output_path: Path | None = None, threshold_db: float = -50, min_silence_duration: float = 0.1
+) -> Path:
     """
     Trim leading and trailing silence from a WAV file using ffmpeg silenceremove filter.
 
@@ -1355,19 +1357,23 @@ def synthesize_multi_speaker(
         # process each speaker batch (one model load per speaker)
         for speaker_num, (voice, lines) in enumerate(speaker_batches.items(), 1):
             # check which lines for this speaker still need generation
-            pending_lines = [(idx, text) for idx, text in lines
-                            if not (work_dir / f"line_{idx:04d}.wav").exists()]
+            pending_lines = [(idx, text) for idx, text in lines if not (work_dir / f"line_{idx:04d}.wav").exists()]
 
             if not pending_lines:
-                print(f"\n[Speaker {speaker_num}/{len(speaker_batches)}] {voice}: all {len(lines)} lines complete, skipping")
+                print(
+                    f"\n[Speaker {speaker_num}/{len(speaker_batches)}] {voice}: all {len(lines)} lines complete, skipping"
+                )
                 continue
 
-            print(f"\n[Speaker {speaker_num}/{len(speaker_batches)}] {voice}: generating {len(pending_lines)}/{len(lines)} lines")
+            print(
+                f"\n[Speaker {speaker_num}/{len(speaker_batches)}] {voice}: generating {len(pending_lines)}/{len(lines)} lines"
+            )
 
             # get voice config (registry or voice.zip)
             voice_config = get_voice_description(voice)
             if not voice_config and voice.endswith(".zip") and Path(voice).exists():
                 import zipfile
+
                 extract_dir = Path(tempfile.mkdtemp(prefix="voice_pkg_"))
                 with zipfile.ZipFile(voice, "r") as zf:
                     zf.extractall(extract_dir)
@@ -1441,7 +1447,9 @@ def synthesize_multi_speaker(
 
             speaker_elapsed = time.time() - speaker_start
             completed_count = sum(1 for idx, _ in pending_lines if (work_dir / f"line_{idx:04d}.wav").exists())
-            print(f"[Speaker {speaker_num}/{len(speaker_batches)}] {voice}: {completed_count} lines in {speaker_elapsed:.1f}s")
+            print(
+                f"[Speaker {speaker_num}/{len(speaker_batches)}] {voice}: {completed_count} lines in {speaker_elapsed:.1f}s"
+            )
 
         # verify all lines exist
         missing = [i for i in range(total_lines) if not (work_dir / f"line_{i:04d}.wav").exists()]

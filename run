@@ -545,6 +545,58 @@ print(f"{Fore.GREEN}✓{Style.RESET_ALL} Generated: {Fore.CYAN}{result}{Style.RE
 
 
 # ##################################################################
+# command ps
+# show currently running and recently completed TTS jobs
+def command_ps(_: argparse.Namespace) -> int:
+    from datetime import datetime, timezone
+
+    jobs_dir = _jobs_dir()
+    jobs = []
+    for f in sorted(jobs_dir.glob("*.json")):
+        data = _read_status(f.stem)
+        if data:
+            jobs.append(data)
+
+    running = [j for j in jobs if j.get("status") == "running"]
+    done = [j for j in jobs if j.get("status") == "done"]
+    done.sort(key=lambda j: j.get("completed_at", ""), reverse=True)
+
+    now = datetime.now(timezone.utc)
+
+    if running:
+        print(f"\n  RUNNING ({len(running)}):")
+        for j in running:
+            started = j.get("started_at", "?")
+            elapsed = ""
+            if started != "?":
+                try:
+                    st = datetime.fromisoformat(started)
+                    mins = (now - st).total_seconds() / 60
+                    elapsed = f" ({mins:.0f}m ago)"
+                except (ValueError, TypeError):
+                    pass
+            out = j.get("output_path", "?")
+            caller = j.get("caller", "?")
+            voice = j.get("voice", "?")
+            print(f"    {Path(out).name}  voice={voice}  caller={caller}  started={started}{elapsed}")
+    else:
+        print("\n  No jobs currently running.")
+
+    if done:
+        recent = done[:10]
+        print(f"\n  RECENT ({len(recent)} of {len(done)}):")
+        for j in recent:
+            out = j.get("output_path", "?")
+            caller = j.get("caller", "?")
+            voice = j.get("voice", "?")
+            completed = j.get("completed_at", "?")
+            print(f"    {Path(out).name}  voice={voice}  caller={caller}  completed={completed}")
+
+    print()
+    return 0
+
+
+# ##################################################################
 # command test
 # run pytest for a specific test target and log output
 def command_test(args: argparse.Namespace) -> int:
@@ -652,6 +704,9 @@ def main(argv: list[str]) -> int:
 
     p_lint = sub.add_parser("lint", help="Run linter")
     p_lint.set_defaults(func=command_lint)
+
+    p_ps = sub.add_parser("ps", help="Show running and recently completed TTS jobs")
+    p_ps.set_defaults(func=command_ps)
 
     p_check = sub.add_parser("check", help="Run full suite and gates (dazpycheck)")
     p_check.set_defaults(func=command_check)

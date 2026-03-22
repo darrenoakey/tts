@@ -6,6 +6,7 @@ synthesizes audio for all text chunks, and writes a single combined WAV.
 
 Designed to run on the spark machine with PyTorch + CUDA.
 """
+
 import gc
 import json
 import sys
