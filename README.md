@@ -192,3 +192,7 @@ Options:
 | `-s, --speed` | Speed multiplier from 0.5 to 2.0 (default: `1.0`) |
 | `-e, --enhance` | Apply AI audio enhancement (slower) |
 | `-d, --voice-description` | Design a voice on-the-fly from a description |
+
+## License
+
+This project is licensed under [CC BY-NC 4.0](https://darren-static.waft.dev) - free to use and modify, but no commercial use without permission.
