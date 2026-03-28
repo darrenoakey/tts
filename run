@@ -220,13 +220,13 @@ def command_tts(args: argparse.Namespace) -> int:
         "started_at": datetime.now(timezone.utc).isoformat(),
     })
 
+    model = args.model or "qwen"
     cmd = [str(VENV_PYTHON), "-c", """
 import sys
 from pathlib import Path
 from colorama import Fore, Style, init
 init(autoreset=True)
 
-from src.arbiter_engine import get_arbiter_engine
 from src.tts_engine import get_voice_description, DEFAULT_SPEED
 
 input_arg = sys.argv[1]
@@ -238,6 +238,7 @@ speed = float(sys.argv[6]) if sys.argv[6] != "None" else None
 voice_description = sys.argv[7] if sys.argv[7] != "None" else None
 enhance = sys.argv[8] == "True"
 caller = sys.argv[9]
+model = sys.argv[10]
 
 # read input text
 input_path = Path(input_arg)
@@ -259,7 +260,13 @@ if speed is None:
     custom = get_voice_description(voice)
     speed = custom.get("speed", DEFAULT_SPEED) if custom else DEFAULT_SPEED
 
-engine = get_arbiter_engine(voice=voice, voice_description=voice_description)
+if model == "voxtral":
+    from src.arbiter_engine import get_voxtral_engine
+    engine = get_voxtral_engine(voice=voice)
+else:
+    from src.arbiter_engine import get_arbiter_engine
+    engine = get_arbiter_engine(voice=voice, voice_description=voice_description)
+
 result = engine.synthesize(
     text=text,
     output_path=Path(output),
@@ -279,6 +286,7 @@ print(f"{Fore.GREEN}✓{Style.RESET_ALL} Generated: {Fore.CYAN}{result}{Style.RE
         args.voice_description if args.voice_description else "None",
         str(args.enhance),
         caller,
+        model,
     ]
     rc = _run_venv(cmd, env={"PYTHONPATH": str(PROJECT_ROOT)})
 
@@ -675,6 +683,7 @@ def main(argv: list[str]) -> int:
     p_tts.add_argument("-s", "--speed", type=float, help="Speed multiplier 0.5-2.0 (default: 1.0)")
     p_tts.add_argument("-d", "--voice-description", help="Voice description for on-the-fly voice design")
     p_tts.add_argument("-e", "--enhance", action="store_true", help="Apply AI enhancement (ultra quality, slower)")
+    p_tts.add_argument("-m", "--model", default="qwen", choices=["qwen", "voxtral"], help="TTS model (default: qwen)")
     p_tts.add_argument("-c", "--caller", required=True, help="Caller identifier for deduplication (e.g. state-flow/blog)")
     p_tts.set_defaults(func=command_tts)
 

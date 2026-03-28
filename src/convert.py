@@ -49,7 +49,11 @@ def convert_text_to_speech(
     if speed is None:
         speed = custom_voice.get("speed", DEFAULT_SPEED) if custom_voice else DEFAULT_SPEED
 
-    engine = get_engine(model, voice=voice, voice_description=voice_description)
+    if model == "voxtral":
+        from src.arbiter_engine import get_voxtral_engine
+        engine = get_voxtral_engine(voice=voice)
+    else:
+        engine = get_engine(model, voice=voice, voice_description=voice_description)
     return engine.synthesize(
         text, output_path, language=language, temperature=temperature, speed=speed, enhance=enhance
     )

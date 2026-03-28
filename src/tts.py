@@ -54,7 +54,7 @@ def main(argv: list[str]) -> int:
         "--model",
         type=str,
         default="qwen",
-        choices=["qwen"],
+        choices=["qwen", "voxtral"],
         help="TTS model to use (default: qwen)",
     )
     p_gen.add_argument(

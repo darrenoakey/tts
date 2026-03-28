@@ -295,6 +295,116 @@ def get_arbiter_engine(voice: str = "aiden", voice_description: str | None = Non
 
 
 # ##################################################################
+# voxtral tts engine
+# delegates synthesis to vllm-served Voxtral model via arbiter
+class VoxtralTtsEngine(TtsEngine):
+    def __init__(self, voice: str = "alloy"):
+        self.voice = voice
+
+    def synthesize(
+        self,
+        text: str,
+        output_path: Path,
+        language: str = "English",
+        temperature: float = DEFAULT_TEMPERATURE,
+        speed: float = DEFAULT_SPEED,
+        enhance: bool = False,
+    ) -> Path:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        check_arbiter_reachable()
+
+        # split text into chunks
+        chunks = split_into_chunks(text)
+        total = len(chunks)
+        print(f"Synthesizing {total} chunk(s) via arbiter (voxtral)...")
+
+        # submit ALL chunks at once
+        job_ids = []
+        for chunk in chunks:
+            params = {"text": chunk, "voice": self.voice, "language": language, "temperature": temperature}
+            if speed != 1.0:
+                params["speed"] = speed
+            job_id = _submit_voxtral_job(params)
+            job_ids.append(job_id)
+        print(f"  Submitted {total} jobs, waiting...", flush=True)
+
+        # poll all until complete
+        start = time.time()
+        results = _poll_all_jobs(job_ids)
+        elapsed = time.time() - start
+        print(f"  All {total} chunks done ({elapsed:.1f}s)", flush=True)
+
+        # decode wav data and write chunk files
+        chunk_wavs: list[Path] = []
+        try:
+            for result in results:
+                wav_bytes = _decode_wav_result(result)
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                    tmp.write(wav_bytes)
+                    chunk_wavs.append(Path(tmp.name))
+
+            # enhance each chunk if requested
+            if enhance:
+                for i, chunk_wav in enumerate(chunk_wavs):
+                    print(f"  Enhancing chunk {i + 1}/{total}...")
+                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                        enhanced_path = Path(tmp.name)
+                    enhance_output(chunk_wav, enhanced_path)
+                    chunk_wav.unlink()
+                    chunk_wavs[i] = enhanced_path
+
+            # concatenate chunks
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                combined_wav = Path(tmp.name)
+            concatenate_wav_files(chunk_wavs, combined_wav)
+
+            # convert to final format
+            if output_path.suffix.lower() == ".mp3":
+                convert_wav_to_mp3(combined_wav, output_path, normalize=True, speed=speed)
+                combined_wav.unlink()
+            elif speed != 1.0:
+                speed = max(0.5, min(2.0, speed))
+                cmd = ["ffmpeg", "-y", "-i", str(combined_wav), "-af", f"atempo={speed}", str(output_path)]
+                ffmpeg_result = subprocess.run(cmd, capture_output=True, text=True)
+                combined_wav.unlink()
+                if ffmpeg_result.returncode != 0:
+                    raise RuntimeError(f"Speed adjustment failed: {ffmpeg_result.stderr}")
+            else:
+                shutil.move(str(combined_wav), str(output_path))
+
+        finally:
+            for wav in chunk_wavs:
+                if wav.exists():
+                    wav.unlink()
+
+        return output_path
+
+
+def _submit_voxtral_job(params: dict) -> str:
+    """Submit a voxtral TTS job using model-based routing."""
+    payload = json.dumps({"type": "tts-voxtral", "model": "tts-voxtral", "params": params}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{ARBITER_BASE_URL}/v1/jobs",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+            return result["job_id"]
+    except urllib.error.URLError as e:
+        raise ArbiterError(f"Failed to submit tts-voxtral job: {e}")
+
+
+def get_voxtral_engine(voice: str = "alloy") -> VoxtralTtsEngine:
+    """Get a VoxtralTtsEngine."""
+    return VoxtralTtsEngine(voice=voice)
+
+
+# ##################################################################
 # multi-speaker synthesis via arbiter
 # submits ALL lines at once, then polls until all complete
 def synthesize_multi_speaker_arbiter(
