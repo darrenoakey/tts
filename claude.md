@@ -134,3 +134,6 @@ Local MLX equivalents (in tts_engine.py, not default):
 - **Enhancement output is 44.1kHz** - resemble-enhance upsamples from 24kHz to 44.1kHz
 - **Multi-speaker silence trimming** - uses ffmpeg silenceremove filter (-50dB threshold, 0.1s min duration) to remove leading/trailing silence from each segment for tight dialogue
 - **Arbiter serializes per model** — submitting 10 chunks queues them all; no local locking needed
+- **Voxtral TTS**: `--model voxtral` option. Uses vllm-omni on spark via arbiter's vllm-worker. Stage 0 gpu_memory_utilization must be 0.15 (not 0.8) on GB10 to leave room for Stage 1
+- **Arbiter vllm-worker pattern**: Generic Go binary at `/home/darren/src/arbiter/cmd/vllm-worker/` wrapping `vllm serve --omni`. Uses `VLLM_MODEL` and `VLLM_MODE` env vars via adapter_params. Same stdin/stdout JSON protocol as llm-worker
+- **Voxtral voices**: alloy, casual_male, casual_female, cheerful_female, neutral_female, neutral_male, plus language-specific (pt/nl/it/fr/es/de/ar/hi male/female)
