@@ -32,10 +32,12 @@ from src.tts_engine import (
 )
 
 # The supervised `arbiter-tunnel` auto service forwards this loopback port to
-# spark's arbiter. Loopback is the only address that works from here: macOS
-# Local Network privacy denies unsigned Python processes on this Mac any LAN
-# socket, so dialling 10.0.0.254 directly fails with Errno 65 "no route to
-# host" while `curl` and `ssh` to the same address succeed.
+# spark's arbiter. Loopback is the only address that works from here:
+# ExpressVPN's Network Lock app-allowlists by code signature, and homebrew's
+# python is only ad-hoc signed, so it gets silently denied every LAN socket
+# once the VPN helpers start. Dialling 10.0.0.254 fails with Errno 65 "no
+# route to host" while Apple-signed `curl` and `ssh` reach it every time.
+# Verified 2026-08-25: ExpressVPN.app running with a live pf rule.
 ARBITER_BASE_URL = "http://127.0.0.1:8400"
 POLL_INTERVAL_S = 0.5
 JOB_TIMEOUT_S = 600  # 10 minutes total for all chunks
