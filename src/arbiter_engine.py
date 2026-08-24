@@ -31,7 +31,12 @@ from src.tts_engine import (
     QWEN_VOICES,
 )
 
-ARBITER_BASE_URL = "http://10.0.0.254:8400"
+# The supervised `arbiter-tunnel` auto service forwards this loopback port to
+# spark's arbiter. Loopback is the only address that works from here: macOS
+# Local Network privacy denies unsigned Python processes on this Mac any LAN
+# socket, so dialling 10.0.0.254 directly fails with Errno 65 "no route to
+# host" while `curl` and `ssh` to the same address succeed.
+ARBITER_BASE_URL = "http://127.0.0.1:8400"
 POLL_INTERVAL_S = 0.5
 JOB_TIMEOUT_S = 600  # 10 minutes total for all chunks
 
@@ -53,7 +58,10 @@ def check_arbiter_reachable() -> None:
             if data.get("status") != "ok":
                 raise ArbiterError(f"Arbiter unhealthy: {data}")
     except urllib.error.URLError as e:
-        raise ArbiterUnreachableError(f"Arbiter not reachable at {ARBITER_BASE_URL}: {e}")
+        raise ArbiterUnreachableError(
+            f"Arbiter not reachable at {ARBITER_BASE_URL}: {e}. "
+            "The arbiter-tunnel service forwards this port to spark; check `auto ps arbiter-tunnel`."
+        )
     except TimeoutError:
         raise ArbiterUnreachableError(f"Arbiter timed out at {ARBITER_BASE_URL}")
 
