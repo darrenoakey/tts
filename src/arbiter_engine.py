@@ -15,6 +15,8 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
+from arbiter_client import stage_file
+
 from src.tts_engine import (
     DEFAULT_SPEED,
     DEFAULT_TEMPERATURE,
@@ -30,9 +32,6 @@ from src.tts_engine import (
 )
 
 ARBITER_BASE_URL = "http://10.0.0.254:8400"
-SPARK_HOST = "10.0.0.254"
-SPARK_USER = "darren"
-SPARK_INBOX = "/tmp/arbiter-inbox"
 POLL_INTERVAL_S = 0.5
 JOB_TIMEOUT_S = 600  # 10 minutes total for all chunks
 
@@ -116,21 +115,6 @@ def _decode_wav_result(result: dict) -> bytes:
     if not data_b64:
         raise ArbiterError("Arbiter returned no audio data")
     return base64.b64decode(data_b64)
-
-
-def _scp_to_inbox(local_path: str) -> str:
-    """SCP a file to spark's arbiter inbox, return remote path."""
-    filename = f"{int(time.time())}_{Path(local_path).name}"
-    remote_path = f"{SPARK_INBOX}/{filename}"
-    result = subprocess.run(
-        ["scp", "-q", "-o", "ConnectTimeout=10", local_path, f"{SPARK_USER}@{SPARK_HOST}:{remote_path}"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    if result.returncode != 0:
-        raise ArbiterError(f"SCP to arbiter inbox failed: {result.stderr.strip()}")
-    return remote_path
 
 
 # ##################################################################
@@ -240,7 +224,7 @@ class ArbiterTtsEngine(TtsEngine):
 
         if self.ref_audio:
             # SCP ref_audio to arbiter inbox for efficiency
-            remote_path = _scp_to_inbox(self.ref_audio)
+            remote_path = stage_file(self.ref_audio)
             params = {**base, "ref_audio_file": remote_path}
             if self.ref_text:
                 params["ref_text"] = self.ref_text
@@ -440,7 +424,7 @@ def synthesize_multi_speaker_arbiter(
             custom_voice = get_voice_description(voice)
             if custom_voice and custom_voice.get("type") == "clone":
                 job_type = "tts-clone"
-                remote_ref = _scp_to_inbox(custom_voice["ref_audio"])
+                remote_ref = stage_file(custom_voice["ref_audio"])
                 params = {
                     "text": text,
                     "language": language,
